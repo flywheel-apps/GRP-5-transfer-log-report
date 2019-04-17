@@ -1,0 +1,3 @@
+flywheel-sdk==6.1.1.dev1
+pyyaml
+xlrd
