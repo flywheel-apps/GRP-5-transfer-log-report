@@ -144,7 +144,8 @@ def get_hierarchy(client, config, project_id):
         dict: a mapping of tuples to dataview rows
     """
     container_type = config.join
-    columns = [query.field for query in config.queries]
+    valid_key = '{}.info.transfer_log.valid'.format(container_type)
+    columns = [query.field for query in config.queries] + [valid_key]
     if container_type == 'acquisition':
         view = client.View(columns=columns, container=container_type,
                        filename='*.zip', process_files=False, match='all')
@@ -156,7 +157,7 @@ def get_hierarchy(client, config, project_id):
 
     return {
         key_from_flywheel(row, config): client.get(row['{}.id'.format(container_type)])
-        for row in flywheel_table['data']
+        for row in flywheel_table['data'] if not row.get(valid_key)
     }
 
 

@@ -2,7 +2,7 @@
 	"name": "transfer-log-report",
 	"label": "Transfer Log Report",
 	"description": "Validates containers from a transfer log",
-	"version": "0.0.11",
+	"version": "0.0.12",
 	"inputs": {
 		"api-key": {
 			"base": "api-key"
@@ -55,8 +55,7 @@
 	"custom": {
 		"gear-builder": {
 			"category": "analysis",
-			"container": "57b577f6f2f83cf9345b59efd2a62646f9c1c5501ad07015a6abd029cd791a28",
-			"image": "gear-builder-lhbhitbrte-20190416155753"
+			"image": "flywheel/transfer-log-report"
 		}
 	}
 }

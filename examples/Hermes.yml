@@ -1,0 +1,9 @@
+query:
+  - subject.label: "Subject"
+  - session.timestamp: "Modality - Exam Date"
+    pattern: "[^-]+$"
+    timeformat: "%b %d, %Y"
+  - session.label: Timepoint
+  - file.modality: "Modality - Exam Date"
+    pattern: "^[^-]+"
+
