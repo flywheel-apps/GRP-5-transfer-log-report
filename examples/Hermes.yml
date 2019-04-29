@@ -6,4 +6,11 @@ query:
   - session.label: Timepoint
   - file.modality: "Modality - Exam Date"
     pattern: "^[^-]+"
+join: session
+mappings:
+  "Week 4":
+    - "w04"
+    - "wk4"
+    - "Week_4"
+
 

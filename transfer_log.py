@@ -55,6 +55,10 @@ class Config(object):
         """
         self.queries = [ Query(q) for q in config_doc.get('query', [])]
         self.join = config_doc.get('join', 'project')
+        self.mappings = {}
+        for value, keys in config_doc.get('mappings', {}).items():
+            for key in keys:
+                self.mappings[key] = value
 
 
 def load_config_file(file_path):
@@ -99,7 +103,7 @@ def key_from_flywheel(row, config):
         elif value is None:
             return value
         else:
-            return str(value)
+            return config.mappings.get(str(value), str(value))
 
     return tuple([format_value(query) for query in config.queries])
 

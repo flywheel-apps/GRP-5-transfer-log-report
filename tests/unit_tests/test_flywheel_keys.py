@@ -91,3 +91,33 @@ def test_metadata_missing_pattern_key():
 
     expected_key = None,
     assert expected_key == transfer_log.key_from_metadata(row, config)
+
+def test_config_mappings():
+    config = transfer_log.Config({
+        'query': [{'session.label': 'Label'}, {'project.label': 'Project'}],
+        'join': 'session',
+        'mappings': {
+            'Week 4': ['w04', 'wk4', 'Week_4']
+        }
+    })
+
+    assert config.mappings == {
+        'w04': 'Week 4',
+        'wk4': 'Week 4',
+        'Week_4': 'Week 4'
+    }
+
+
+def test_flywheel_mappings():
+    config = transfer_log.Config({
+        'query': [{'session.label': 'Label'}, {'project.label': 'Project'}],
+        'join': 'session',
+        'mappings': {
+            'Week 4': ['w04', 'wk4', 'Week_4']
+        }
+    })
+    row = {'session.label': 'w04', 'project.label': 'My Project'}
+
+    expected_key = 'Week 4', 'My Project'
+    assert expected_key == transfer_log.key_from_flywheel(row, config)
+
