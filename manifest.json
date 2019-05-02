@@ -1,61 +1,64 @@
 {
-	"name": "transfer-log-report",
-	"label": "Transfer Log Report",
-	"description": "Validates containers from a transfer log",
-	"version": "0.0.12",
-	"inputs": {
-		"api-key": {
-			"base": "api-key"
-		},
-		"config_file": {
-			"base": "file",
-			"description": "A yaml configuration file detailing how to read the transfer log",
-			"type": {
-				"enum": [
-					"source data"
-				]
-			}
-		},
-		"transfer_log": {
-			"base": "file",
-			"description": "A transfer log file",
-			"type": {
-				"enum": [
-					"tabular data"
-				]
-			}
-		}
-	},
-	"config": {
-		"file_type": {
-			"default": "csv",
-			"description": "File Type of report (json or csv)",
-			"type": "string"
-		},
-		"filename": {
-			"default": "",
-			"description": "Optional report name override",
-			"type": "string"
-		}
-	},
-	"environment": {
-		"GPG_KEY": "0D96DF4D4110E5C43FBFB17F2D347EA6AA65421D",
-		"LANG": "C.UTF-8",
-		"PATH": "/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-		"PYTHON_PIP_VERSION": "18.1",
-		"PYTHON_VERSION": "3.7.1"
-	},
-	"command": "python run.py",
-	"author": "Harsha Kethineni",
-	"maintainer": "Harsha Kethineni",
-	"cite": "List citations here.",
-	"license": "Other",
-	"source": "",
-	"url": "",
-	"custom": {
-		"gear-builder": {
-			"category": "analysis",
-			"image": "flywheel/transfer-log-report"
-		}
-	}
+  "name": "transfer-log-report",
+  "label": "Transfer Log Report Validation",
+  "description": "Validate that the data in the transfer report log exists within a given project. Outputs a csv file with the fields: 'error', 'path',  'type', 'resolved', 'label', '_id'. ",
+  "version": "0.1.4",
+  "custom": {
+    "gear-builder": {
+      "category": "analysis",
+      "image": "flywheel/transfer-log-report:0.1.4"
+    },
+    "flywheel": {
+      "suite": "Metadata Import and Validation"
+    },
+    "inputs": {
+      "api-key": {
+        "base": "api-key"
+      },
+      "config_file": {
+        "base": "file",
+        "description": "A yaml configuration file detailing how to read the transfer log.",
+        "type": {
+          "enum": [
+            "source data"
+          ]
+        }
+      },
+      "transfer_log": {
+        "base": "file",
+        "description": "A transfer log file.",
+        "type": {
+          "enum": [
+            "tabular data"
+          ]
+        }
+      }
+    },
+    "config": {
+      "file_type": {
+        "default": "csv",
+        "description": "File Type of output report (json or csv).",
+        "type": "string"
+      },
+      "filename": {
+        "default": "",
+        "description": "Name for output report (optional).",
+        "type": "string"
+      }
+    },
+    "environment": {
+      "GPG_KEY": "0D96DF4D4110E5C43FBFB17F2D347EA6AA65421D",
+      "LANG": "C.UTF-8",
+      "PATH": "/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "PYTHON_PIP_VERSION": "18.1",
+      "PYTHON_VERSION": "3.7.1"
+    },
+    "command": "python run.py",
+    "author": "Flywheel",
+    "maintainer": "Flywheel <support@flywheel.io>",
+    "cite": "List citations here.",
+    "license": "Other",
+    "source": "https://github.com/flywheel-apps/transfer-log-report",
+    "url": ""
+  }
 }
