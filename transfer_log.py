@@ -132,6 +132,8 @@ def key_from_metadata(row, config):
             match = re.search(query.pattern, value)
             if match:
                 return match.group(0).strip()
+        elif query.field == 'subject.label' and isinstance(value, float):
+            return str(int(value))
         return str(value)
 
     return tuple([format_value(query) for query in config.queries])
@@ -149,7 +151,8 @@ def get_hierarchy(client, config, project_id):
     """
     container_type = config.join
     valid_key = '{}.info.transfer_log.valid'.format(container_type)
-    columns = [query.field for query in config.queries] + [valid_key]
+    deleted_key = '{}.deleted'.format(container_type)
+    columns = [query.field for query in config.queries] + [valid_key, deleted_key]
     if container_type == 'acquisition':
         view = client.View(columns=columns, container=container_type,
                        filename='*.zip', process_files=False, match='all')
@@ -161,7 +164,8 @@ def get_hierarchy(client, config, project_id):
 
     return {
         key_from_flywheel(row, config): client.get(row['{}.id'.format(container_type)])
-        for row in flywheel_table['data'] if not row.get(valid_key)
+        for row in flywheel_table['data']
+        if not row.get(valid_key) and row.get(deleted_key) is None
     }
 
 
@@ -275,6 +279,7 @@ def main(client, config_path, log_level, metadata, project_label):
 
     # Load in the flywheel hierarchy as tabular data
     flywheel_table = get_hierarchy(client, config, project.id)
+    log.debug(flywheel_table.keys())
 
     missing_containers, found_containers, unexpected_containers = \
         validate_flywheel_against_metadata(flywheel_table, input_metadata)
