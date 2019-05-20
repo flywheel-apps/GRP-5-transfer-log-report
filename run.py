@@ -127,7 +127,7 @@ def main():
 
         # Run the metadata script
         transfer_report = transfer_log.main(gear_context.client,
-                                            gear_context.get_input_path('config_file'),
+                                            gear_context.get_input_path('template'),
                                             'DEBUG',
                                             gear_context.get_input_path('transfer_log'),
                                             parent.label)

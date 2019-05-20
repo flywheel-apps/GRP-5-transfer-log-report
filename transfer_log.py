@@ -147,7 +147,7 @@ def get_hierarchy(client, config, project_id):
         config (dict): The config dictionary
         project_id (str): The id of th project to migrate metadata to
     Returns:
-        dict: a mapping of tuples to dataview rows
+        dict: a mapping of tuples to flywheel sdk containers
     """
     container_type = config.join
     valid_key = '{}.info.transfer_log.valid'.format(container_type)
@@ -165,7 +165,7 @@ def get_hierarchy(client, config, project_id):
     return {
         key_from_flywheel(row, config): client.get(row['{}.id'.format(container_type)])
         for row in flywheel_table['data']
-        if not row.get(valid_key) and row.get(deleted_key) is None
+        if row.get(deleted_key) is None
     }
 
 
@@ -201,6 +201,8 @@ def load_metadata(metadata_path, config):
                 raw_metadata.append(row)
     else:
         raise Exception('Filetype "%s" not supported', extension)
+    if raw_metadata and not check_config_and_log_match(config, raw_metadata[0]):
+        raise Exception('Template file referencing columns not provided in log')
 
     return {key_from_metadata(row, config): row for row in raw_metadata}
 
@@ -232,7 +234,7 @@ def validate_flywheel_against_metadata(flywheel_table, metadata):
 def create_missing_error(container_key, container_type):
     return {
         'error': '{} {} missing from flywheel'.format(container_type,
-                                                         container_key),
+                                                      container_key),
         'path': None,
         'type': container_type,
         'resolved': False,
@@ -250,6 +252,21 @@ def create_unexpected_error(container, client):
         'label': container.label,
         '_id': container.id
     }
+
+
+def check_config_and_log_match(config, row):
+    """Ensures that all the columns expected by the config are present in the
+        transfer_log
+
+    Args:
+        config (Config): The loaded in template file
+        row (dict): A single row of the input metadata before being turned into
+            keys
+    """
+    for query in config.queries:
+        if query.value not in row.keys():
+            return False
+    return True
 
 
 def main(client, config_path, log_level, metadata, project_label):
@@ -289,7 +306,8 @@ def main(client, config_path, log_level, metadata, project_label):
     for container in missing_containers:
         errors.append(create_missing_error(container, config.join))
     for container in unexpected_containers.values():
-        errors.append(create_unexpected_error(container, client))
+        if not container.info.get('tranfer_log', {}).get('valid'):
+            errors.append(create_unexpected_error(container, client))
 
     for container in found_containers:
         container.update_info({'transfer_log': {'valid': True}})
