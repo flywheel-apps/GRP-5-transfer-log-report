@@ -41,7 +41,7 @@ def test_validate_project_with_missing_sessions():
 
 
     assert len(missing_containers) == 1
-    assert missing_containers[0] == ('a', 'B', 'C')
+    assert missing_containers[('a', 'B', 'C')] == 'row2'
     assert len(found_containers) == 1
     assert found_containers[0] == 'ses-1'
     assert len(unexpected_containers) == 0

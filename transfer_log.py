@@ -277,7 +277,7 @@ def validate_flywheel_against_metadata(flywheel_table, metadata, config):
 
     found_containers = list(found_containers_map.values())
 
-    return list(metadata.keys()), found_containers, unexpected_containers
+    return metadata, found_containers, unexpected_containers
 
 
 def create_missing_error(row_number, container_type):
