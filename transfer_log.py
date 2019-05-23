@@ -19,6 +19,15 @@ import utils
 log = logging.getLogger()
 
 
+CSV_HEADERS = [
+    'path',
+    'error',
+    'type',
+    'resolved',
+    'label',
+    '_id'
+]
+
 FLYWHEEL_CONTAINER_TYPES = [
     'group',
     'project',
@@ -108,6 +117,24 @@ def key_from_flywheel(row, config):
     return tuple([format_value(query) for query in config.queries])
 
 
+def format_flywheel_key(key, config):
+    """Converts a flywheel key to a metadata key
+
+    Args:
+        key (tuple): A tuple representing the flywheel key
+        config (Config): The config object
+    Returns:
+        tuple: The key to lookup on
+    """
+    new_key = []
+    for index, key_item in enumerate(key):
+        if config.queries[index].value is False:
+            new_key.append(None)
+        else:
+            new_key.append(key_item)
+    return tuple(new_key)
+
+
 def key_from_metadata(row, config):
     """Convert a metadata row to a tuple base on what we will be querying
 
@@ -125,6 +152,10 @@ def key_from_metadata(row, config):
         Returns:
             str|NoneType: The formated value
         """
+        if query.value is False:
+            # This is a flywheel only field in order to differentiate the acquisitions
+            # that don't match a session + modality combo
+            return None
         value = row.get(query.value)
         if value is None:
             return value
@@ -204,10 +235,10 @@ def load_metadata(metadata_path, config):
     if raw_metadata and not check_config_and_log_match(config, raw_metadata[0]):
         raise Exception('Template file referencing columns not provided in log')
 
-    return {key_from_metadata(row, config): row for row in raw_metadata}
+    return {key_from_metadata(row, config): i for i, row in enumerate(raw_metadata)}
 
 
-def validate_flywheel_against_metadata(flywheel_table, metadata):
+def validate_flywheel_against_metadata(flywheel_table, metadata, config):
     """Ensures that a container that matches each row of the metadata exists
     in the project and warns of any container that are not reflected in the
     metadata
@@ -215,26 +246,43 @@ def validate_flywheel_against_metadata(flywheel_table, metadata):
     Args:
         flywheel_table (dict): dictionary with flywheel keys
         metadata (dict): dictionary with metadata keys
+        config (Config): The transfer log configuration
     Returns:
         tuple: A list of missing container keys, a list of found containers, a
             dictionary of unexpected container keys to the corresponding container
     """
-    missing_containers = []
-    found_containers = []
+    unexpected_containers = {}
+    found_containers_map = {}
 
-    for container_key in metadata.keys():
-        if not flywheel_table.get(container_key):
-            missing_containers.append(container_key)
+    # for container_key in metadata.keys():
+    #     if not flywheel_table.get(container_key):
+    #         missing_containers.append(container_key)
+    #     else:
+    #         found_containers.append(flywheel_table.pop(container_key))
+
+    for flywheel_key in flywheel_table.keys():
+        formatted_key = format_flywheel_key(flywheel_key, config)
+        if not metadata.get(formatted_key):
+            if not found_containers_map.get(formatted_key):
+                # doesn't match a found row or a yet to be found row
+                unexpected_containers[flywheel_key] = flywheel_table[flywheel_key]
+            else:
+                # Already found, we can just skip over this
+                continue
         else:
-            found_containers.append(flywheel_table.pop(container_key))
+            # Matches a row that is missing so we move the container over and
+            # pop off of the missing rows table
+            found_containers_map[formatted_key] = flywheel_table[flywheel_key]
+            metadata.pop(formatted_key)
 
-    return missing_containers, found_containers, flywheel_table
+    found_containers = list(found_containers_map.values())
+
+    return list(metadata.keys()), found_containers, unexpected_containers
 
 
-def create_missing_error(container_key, container_type):
+def create_missing_error(row_number, container_type):
     return {
-        'error': '{} {} missing from flywheel'.format(container_type,
-                                                      container_key),
+        'error': 'row {} missing from flywheel'.format(row_number),
         'path': None,
         'type': container_type,
         'resolved': False,
@@ -256,7 +304,7 @@ def create_unexpected_error(container, client):
 
 def check_config_and_log_match(config, row):
     """Ensures that all the columns expected by the config are present in the
-        transfer_log
+        transfer_log unless query value is False
 
     Args:
         config (Config): The loaded in template file
@@ -264,12 +312,12 @@ def check_config_and_log_match(config, row):
             keys
     """
     for query in config.queries:
-        if query.value not in row.keys():
+        if query.value not in row.keys() and query.value is not False:
             return False
     return True
 
 
-def main(client, config_path, log_level, metadata, project_label):
+def main(client, config_path, log_level, metadata, project_path):
     """Query flywheel for a set of containers base on a tabular file and a
     yaml template on how to use the csv file
 
@@ -278,7 +326,7 @@ def main(client, config_path, log_level, metadata, project_label):
         config_path (str): Path to the yaml config file
         log_level (str|int): A logging level (DEBUG, INFO) or int (10, 50)
         metadata (str): Path to the metadata file
-        project_label (str): The label of the project to validate
+        project_path (str): The resolver path to the project
     """
 
     # Load in the config yaml input
@@ -291,20 +339,20 @@ def main(client, config_path, log_level, metadata, project_label):
     input_metadata = load_metadata(metadata, config)
 
 
-    log.debug('Project label is {}'.format(project_label))
-    project = client.projects.find_one('label={}'.format(project_label))
+    log.debug('Project path is {}'.format(project_path))
+    project = client.lookup(project_path)
 
     # Load in the flywheel hierarchy as tabular data
     flywheel_table = get_hierarchy(client, config, project.id)
     log.debug(flywheel_table.keys())
 
     missing_containers, found_containers, unexpected_containers = \
-        validate_flywheel_against_metadata(flywheel_table, input_metadata)
+        validate_flywheel_against_metadata(flywheel_table, input_metadata, config)
 
     # Generate Report
     errors = []
-    for container in missing_containers:
-        errors.append(create_missing_error(container, config.join))
+    for row_number in missing_containers.values():
+        errors.append(create_missing_error(row_number, config.join))
     for container in unexpected_containers.values():
         if not container.info.get('tranfer_log', {}).get('valid'):
             errors.append(create_unexpected_error(container, client))
@@ -315,16 +363,32 @@ def main(client, config_path, log_level, metadata, project_label):
     return errors
 
 
+def create_output_file(errors, filename):
+    """Outputs the errors into a csv file
+
+    Args:
+        errors (list): A list of transfer log errors
+        filename (str): Name of the file to output to
+    """
+    with open(filename, 'w') as output_file:
+        csv_dict_writer = csv.DictWriter(output_file, fieldnames=CSV_HEADERS)
+        csv_dict_writer.writeheader()
+        for error in errors:
+            csv_dict_writer.writerow(error)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('group', help='Id of the group the project is in')
-    parser.add_argument('project', help='Label of the project to migrate to')
+    parser.add_argument('path', help='Resolver path of the project')
     parser.add_argument('metadata', help='tabular file containing metadata')
     parser.add_argument('config', help='YAML file to map the xnat metadata')
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--api-key', help='Use if not logged in via cli')
+    parser.add_argument('--output', '-o', help='Output file csv')
 
     args = parser.parse_args()
+    # Path may be fw://<group_id>/<project_label>
+    path = args.path.split('//')[-1]
 
     # Create client
     if args.api_key:
@@ -338,5 +402,10 @@ if __name__ == '__main__':
     else:
         log_level = 'INFO'
 
-    print(main(fw, args.config, log_level, args.metadata, args.project))
+    errors = main(fw, args.config, log_level, args.metadata, path)
+
+    if args.output:
+        create_output_file(errors, args.output)
+    else:
+        print(errors)
 

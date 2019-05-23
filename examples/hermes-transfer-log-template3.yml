@@ -1,0 +1,41 @@
+query:
+  - subject.label: "Subject"
+  - session.timestamp: "Modality - Exam Date"
+    pattern: "[^-]+$"
+    timeformat: "%b %d, %Y"
+  - session.label: Timepoint
+  - file.modality: "Modality - Exam Date"
+    pattern: "^[^-]+"
+  - acquisition.id: false
+join: acquisition
+mappings:
+  "Week 4":
+    - "w04"
+    - "wk4"
+    - "Week_4"
+    - "Week_04"
+  "Week 12":
+    - "w12"
+    - "wk12"
+    - "Week_12"
+  "Week 16":
+    - "w16"
+    - "wk16"
+    - "Week_16"
+  "Week 20":
+    - "w20"
+    - "wk20"
+    - "Week_20"
+  "Week 24":
+    - "w24"
+  "Week 28":
+    - "w28"
+  "Week 36":
+    - "w36"
+  "Week 48":
+    - "w48"
+  "Screening":
+    - "screening"
+  "REV1":
+    - "Week REV1"
+

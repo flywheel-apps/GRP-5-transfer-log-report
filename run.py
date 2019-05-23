@@ -8,17 +8,8 @@ import logging
 import os
 
 import transfer_log
+import utils
 
-
-ERROR_LOG_FILENAME = 'error.log.json'
-CSV_HEADERS = [
-    'path',
-    'error',
-    'type',
-    'resolved',
-    'label',
-    '_id'
-]
 
 log = logging.getLogger('grp-2')
 
@@ -68,7 +59,7 @@ def create_output_file(error_containers, file_type,
             json.dump(error_containers, output_file)
         elif file_type == 'csv':
             csv_dict_writer = csv.DictWriter(output_file,
-                                             fieldnames=CSV_HEADERS)
+                                             fieldnames=transfer_log.CSV_HEADERS)
             csv_dict_writer.writeheader()
             for container in error_containers:
                 csv_dict_writer.writerow(container)
@@ -124,13 +115,14 @@ def main():
             gear_context.destination['id']
         )
         parent = gear_context.client.get_container(analysis.parent['id'])
+        parent_path = utils.get_resolver_path(gear_context.client, parent)
 
         # Run the metadata script
         transfer_report = transfer_log.main(gear_context.client,
                                             gear_context.get_input_path('template'),
                                             'DEBUG',
                                             gear_context.get_input_path('transfer_log'),
-                                            parent.label)
+                                            parent_path)
         error_count = len(transfer_report)
 
         log.info('Writing error report')

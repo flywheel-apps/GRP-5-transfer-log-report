@@ -10,12 +10,19 @@ DATE = datetime.datetime.now()
 def test_validate_project():
     flywheel_table = {('a','b','c'): 'ses-1', ('a','B','C'): 'ses-2'}
     metadata = {('a','b','c'): 'row1', ('a','B','C'): 'row2'}
+    config = transfer_log.Config({
+        'query': [{'a':'a'}, {'b':'b'}, {'c':'c'}],
+        'join': 'session'
+    })
 
     missing_containers, found_containers, unexpected_containers =  \
-        transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata)
+        transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
+                                                        config)
 
     assert len(missing_containers) == 0
     assert len(found_containers) == 2
+    print(found_containers)
+    print(type(found_containers))
     assert found_containers[0] == 'ses-1'
     assert len(unexpected_containers) == 0
 
@@ -23,9 +30,14 @@ def test_validate_project():
 def test_validate_project_with_missing_sessions():
     flywheel_table = {('a','b','c'): 'ses-1'}
     metadata = {('a','b','c'): 'row1', ('a','B','C'): 'row2'}
+    config = transfer_log.Config({
+        'query': [{'a':'a'}, {'b':'b'}, {'c':'c'}],
+        'join': 'session'
+    })
 
     missing_containers, found_containers, unexpected_containers =  \
-        transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata)
+        transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
+                                                        config)
 
 
     assert len(missing_containers) == 1
@@ -38,9 +50,14 @@ def test_validate_project_with_missing_sessions():
 def test_validate_project_with_unexpected_sessions():
     flywheel_table = {('a','b','c'): 'ses-1', ('a','B','C'): 'ses-2'}
     metadata = {('a','b','c'): 'row1'}
+    config = transfer_log.Config({
+        'query': [{'a':'a'}, {'b':'b'}, {'c':'c'}],
+        'join': 'session'
+    })
 
     missing_containers, found_containers, unexpected_containers =  \
-        transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata)
+        transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
+                                                        config)
 
 
     assert len(missing_containers) == 0
