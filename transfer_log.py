@@ -28,6 +28,12 @@ CSV_HEADERS = [
     '_id'
 ]
 
+TRANSFER_LOG_ERROR_HEADERS = [
+    'row',
+    'column',
+    'error'
+]
+
 FLYWHEEL_CONTAINER_TYPES = [
     'group',
     'project',
@@ -37,8 +43,14 @@ FLYWHEEL_CONTAINER_TYPES = [
 ]
 
 
+class TransferLogException(Exception):
+    def __init__(self, msg, errors=[]):
+        self.errors = errors
+        super(TransferLogException, self).__init__(msg)
+
+
 class Query(object):
-    reserved_keys = ['pattern', 'timeformat']
+    reserved_keys = ['pattern', 'timeformat', 'validate']
     def __init__(self, document):
         """Object to represent a single query
 
@@ -53,6 +65,7 @@ class Query(object):
         self.value = document.get(self.field)
         self.pattern = document.get('pattern')
         self.timeformat = document.get('timeformat')
+        self.validate = document.get('validate')
 
 
 class Config(object):
@@ -232,8 +245,10 @@ def load_metadata(metadata_path, config):
                 raw_metadata.append(row)
     else:
         raise Exception('Filetype "%s" not supported', extension)
-    if raw_metadata and not check_config_and_log_match(config, raw_metadata[0]):
-        raise Exception('Template file referencing columns not provided in log')
+    if raw_metadata:
+        errors = check_config_and_log_match(config, raw_metadata)
+        if errors:
+            raise TransferLogException('Malformed Transfer Log', errors=errors)
 
     return {key_from_metadata(row, config): i for i, row in enumerate(raw_metadata)}
 
@@ -302,19 +317,37 @@ def create_unexpected_error(container, client):
     }
 
 
-def check_config_and_log_match(config, row):
+def check_config_and_log_match(config, raw_metadata):
     """Ensures that all the columns expected by the config are present in the
         transfer_log unless query value is False
 
     Args:
         config (Config): The loaded in template file
-        row (dict): A single row of the input metadata before being turned into
-            keys
+        raw_metadata (list): A list of rows, which are represented as dicts
+
+    Returns:
+        list: List of malformed transfer log errors
     """
+    errors = []
+    header = raw_metadata[0].keys()
     for query in config.queries:
-        if query.value not in row.keys() and query.value is not False:
-            return False
-    return True
+        if query.value not in header and query.value is not False:
+            errors.append({
+                'column': query.value,
+                'error': 'Transfer log missing column {}'.format(query.value)
+            })
+
+    if not errors:
+        for index, row in enumerate(raw_metadata):
+            for query in config.queries:
+                if query.validate and not re.match(query.validate, str(row[query.value])):
+                    errors.append({
+                        'row': index + 1,
+                        'column': query.value,
+                        'error': 'Value {} does not match {}'.format(row[query.value],
+                                                                     query.validate)
+                    })
+    return errors
 
 
 def main(client, config_path, log_level, metadata, project_path):
@@ -337,7 +370,6 @@ def main(client, config_path, log_level, metadata, project_path):
 
     # Load in the tabular data
     input_metadata = load_metadata(metadata, config)
-
 
     log.debug('Project path is {}'.format(project_path))
     project = client.lookup(project_path)
@@ -363,15 +395,17 @@ def main(client, config_path, log_level, metadata, project_path):
     return errors
 
 
-def create_output_file(errors, filename):
+def create_output_file(errors, filename, validate_transfer_log=False):
     """Outputs the errors into a csv file
 
     Args:
         errors (list): A list of transfer log errors
         filename (str): Name of the file to output to
+        validate_transfer_log (bool): Use headers for malformed transfer log
     """
+    headers = TRANSFER_LOG_ERROR_HEADERS if validate_transfer_log else CSV_HEADERS
     with open(filename, 'w') as output_file:
-        csv_dict_writer = csv.DictWriter(output_file, fieldnames=CSV_HEADERS)
+        csv_dict_writer = csv.DictWriter(output_file, fieldnames=headers)
         csv_dict_writer.writeheader()
         for error in errors:
             csv_dict_writer.writerow(error)
@@ -402,7 +436,12 @@ if __name__ == '__main__':
     else:
         log_level = 'INFO'
 
-    errors = main(fw, args.config, log_level, args.metadata, path)
+    try:
+        errors = main(fw, args.config, log_level, args.metadata, path)
+    except TransferLogException as e:
+        create_output_file(e.errors, 'error-transfer-log.csv',
+                           validate_transfer_log=True)
+        raise e
 
     if args.output:
         create_output_file(errors, args.output)

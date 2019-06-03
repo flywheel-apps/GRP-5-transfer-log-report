@@ -2,11 +2,11 @@
   "name": "transfer-log-report",
   "label": "Transfer Log Report Validation",
   "description": "Validate that the data in the transfer report log exists within a given project. Outputs a csv file with the fields: 'error', 'path',  'type', 'resolved', 'label', '_id'. ",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "custom": {
     "gear-builder": {
       "category": "analysis",
-      "image": "flywheel/transfer-log-report:0.1.9"
+      "image": "flywheel/transfer-log-report:0.2.0"
     },
     "flywheel": {
       "suite": "Metadata Import and Validation"

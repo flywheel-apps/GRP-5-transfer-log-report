@@ -36,8 +36,8 @@ def create_unexpected_session_error(session, client):
     }
 
 
-def create_output_file(error_containers, file_type,
-                       gear_context, output_filename=None):
+def create_output_file(error_containers, file_type, gear_context,
+                       output_filename=None, validate_transfer_log=False):
     """Creates the output file from a set of error containers, the file type
     is determined from the config value
 
@@ -48,18 +48,19 @@ def create_output_file(error_containers, file_type,
         gear_context (GearContext): the gear context so that we can write out
             the file
         output_filename (str): and optional file name that can be passed
+        validate_transfer_log (bool): Use malformed transfer log headers
 
     Returns:
         str: The filename that was used to write the report as
     """
     file_ext = 'csv' if file_type == 'csv' else 'json'
     output_filename = output_filename or 'transfer-log-report.{}'.format(file_ext)
+    headers = transfer_log.TRANSFER_LOG_ERROR_HEADERS if validate_transfer_log else transfer_log.CSV_HEADERS
     with gear_context.open_output(output_filename, 'w') as output_file:
         if file_type == 'json':
             json.dump(error_containers, output_file)
         elif file_type == 'csv':
-            csv_dict_writer = csv.DictWriter(output_file,
-                                             fieldnames=transfer_log.CSV_HEADERS)
+            csv_dict_writer = csv.DictWriter(output_file, fieldnames=headers)
             csv_dict_writer.writeheader()
             for container in error_containers:
                 csv_dict_writer.writerow(container)
@@ -118,11 +119,16 @@ def main():
         parent_path = utils.get_resolver_path(gear_context.client, parent)
 
         # Run the metadata script
-        transfer_report = transfer_log.main(gear_context.client,
-                                            gear_context.get_input_path('template'),
-                                            'DEBUG',
-                                            gear_context.get_input_path('transfer_log'),
-                                            parent_path)
+        try:
+            transfer_report = transfer_log.main(gear_context.client,
+                                                gear_context.get_input_path('template'),
+                                                'DEBUG',
+                                                gear_context.get_input_path('transfer_log'),
+                                                parent_path)
+        except TransferLogException as e:
+            create_output_file(e.errors, 'csv', gear_context,
+                               'error-transfer-log.csv', True)
+            raise e
         error_count = len(transfer_report)
 
         log.info('Writing error report')
