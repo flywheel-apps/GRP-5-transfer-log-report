@@ -125,7 +125,7 @@ def main():
                                                 'DEBUG',
                                                 gear_context.get_input_path('transfer_log'),
                                                 parent_path)
-        except TransferLogException as e:
+        except transfer_log.TransferLogException as e:
             create_output_file(e.errors, 'csv', gear_context,
                                'error-transfer-log.csv', True)
             raise e
