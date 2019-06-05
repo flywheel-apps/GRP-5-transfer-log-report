@@ -340,7 +340,7 @@ def check_config_and_log_match(config, raw_metadata):
     if not errors:
         for index, row in enumerate(raw_metadata):
             for query in config.queries:
-                if query.validate and not re.match(query.validate, str(row[query.value])):
+                if query.validate and not re.search(query.validate, str(row[query.value])):
                     errors.append({
                         'row': index + 2,
                         'column': query.value,
