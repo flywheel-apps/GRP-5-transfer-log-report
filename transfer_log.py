@@ -250,7 +250,7 @@ def load_metadata(metadata_path, config):
         if errors:
             raise TransferLogException('Malformed Transfer Log', errors=errors)
 
-    return {key_from_metadata(row, config): i for i, row in enumerate(raw_metadata)}
+    return {key_from_metadata(row, config): i + 2 for i, row in enumerate(raw_metadata)}
 
 
 def validate_flywheel_against_metadata(flywheel_table, metadata, config):
@@ -342,7 +342,7 @@ def check_config_and_log_match(config, raw_metadata):
             for query in config.queries:
                 if query.validate and not re.match(query.validate, str(row[query.value])):
                     errors.append({
-                        'row': index + 1,
+                        'row': index + 2,
                         'column': query.value,
                         'error': 'Value {} does not match {}'.format(row[query.value],
                                                                      query.validate)

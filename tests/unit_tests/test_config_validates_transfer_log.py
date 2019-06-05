@@ -36,7 +36,7 @@ def test_transfer_log_invalid_value():
     errors = transfer_log.check_config_and_log_match(config, rows)
     print(errors)
     assert len(errors) == 1
-    assert errors[0]['row'] == 1
+    assert errors[0]['row'] == 2
     assert errors[0]['column'] == 'Label'
 
 
