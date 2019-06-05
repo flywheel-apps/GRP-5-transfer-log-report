@@ -14,7 +14,8 @@ build:
 test:
   stage: test
   script:
-    - ./tests/bin/docker-test.sh
+    - docker build -f "${DOCKERFILE}" -t flywheel/transfer-log-report:testing --target testing .
+    - docker run --rm flywheel/transfer-log-report:testing bash /src/tests/bin/tests.sh
 
 deploy:
   stage: deploy
