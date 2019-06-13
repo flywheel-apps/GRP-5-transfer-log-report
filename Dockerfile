@@ -1,5 +1,4 @@
-FROM python:3.7-alpine3.8 as base
-RUN apk add bash
+FROM python:3.7-slim-stretch as base
 COPY . /src
 WORKDIR /src
 RUN pip install -r requirements.txt

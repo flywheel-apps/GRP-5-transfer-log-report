@@ -1,4 +1,5 @@
 flywheel-sdk==6.3.0
 pyyaml
+pandas
 xlrd
 urllib3==1.23

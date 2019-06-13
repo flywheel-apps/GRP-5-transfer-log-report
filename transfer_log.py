@@ -9,12 +9,15 @@ import flywheel
 import logging
 import json
 import os
+import pandas as pd
 import re
 import sys
 import xlrd
 import yaml
 
 import utils
+
+from dateutil import tz
 
 log = logging.getLogger()
 
@@ -50,7 +53,7 @@ class TransferLogException(Exception):
 
 
 class Query(object):
-    reserved_keys = ['pattern', 'timeformat', 'validate']
+    reserved_keys = ['pattern', 'timeformat', 'timezone', 'validate']
     def __init__(self, document):
         """Object to represent a single query
 
@@ -65,6 +68,7 @@ class Query(object):
         self.value = document.get(self.field)
         self.pattern = document.get('pattern')
         self.timeformat = document.get('timeformat')
+        self.timezone = document.get('timezone')
         self.validate = document.get('validate')
 
 
@@ -117,7 +121,11 @@ def key_from_flywheel(row, config):
         value = row.get(query.field)
         if query.timeformat is not None:
             try:
-                return datetime.datetime.fromisoformat(value).strftime(query.timeformat)
+                timestamp = datetime.datetime.fromisoformat(value)
+                timezone = tz.gettz(query.timezone)
+                if timezone and query.timezone:
+                    timestamp = timestamp.astimezone(timezone)
+                return timestamp.strftime(query.timeformat)
             except ValueError as e:
                 raise ValueError('Cannot parse time from non-iso timestamp {}={}'.format(
                     query.field, value
@@ -197,19 +205,30 @@ def get_hierarchy(client, config, project_id):
     valid_key = '{}.info.transfer_log.valid'.format(container_type)
     deleted_key = '{}.deleted'.format(container_type)
     columns = [query.field for query in config.queries] + [valid_key, deleted_key]
+    get_original_timezone = False
+    if 'session.timestamp' in columns:
+        get_original_timezone = True
+        columns.append('session.timezone')
     if container_type == 'acquisition':
         view = client.View(columns=columns, container=container_type,
                        filename='*.zip', process_files=False, match='all')
     else:
         view = client.View(columns=columns)
 
-    with client.read_view_data(view, project_id) as resp:
-        flywheel_table = json.load(resp)
+    flywheel_table = client.read_view_dataframe(view, project_id)
+    # with client.read_view_data(view, project_id) as resp:
+    #     flywheel_table = json.load(resp)
+    if get_original_timezone:
+        flywheel_table['session.timestamp'] =  \
+            flywheel_table.apply(lambda row: datetime.datetime.fromisoformat(row['session.timestamp']).astimezone(tz.gettz(row['session.timezone'])).isoformat(),
+                                 axis=1)
+    flywheel_table = flywheel_table.to_dict(orient='records')
+    print('Hi')
 
     return {
         key_from_flywheel(row, config): client.get(row['{}.id'.format(container_type)])
-        for row in flywheel_table['data']
-        if row.get(deleted_key) is None
+        for row in flywheel_table
+        if pd.isna(row.get(deleted_key))
     }
 
 

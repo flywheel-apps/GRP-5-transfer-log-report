@@ -24,9 +24,41 @@ def test_flywheel_key_timestamp():
     })
     row = {
         'session.label': 'ses-1',
-        'session.timestamp': str(datetime.datetime(1970, 1, 1))
+        'session.timestamp': str(datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
     }
 
+    expected_key = 'Jan 01, 1970',
+    assert expected_key == transfer_log.key_from_flywheel(row, config)
+
+
+def test_flywheel_key_timestamp_timezone():
+    config = transfer_log.Config({
+        'query': [{
+            'session.timestamp': 'Date',
+            'timeformat': '%b %d, %Y',
+            'timezone': 'America/Chicago'
+        }]
+    })
+    row = {
+        'session.label': 'ses-1',
+        'session.timestamp': str(datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
+    }
+    expected_key = 'Dec 31, 1969',
+    assert expected_key == transfer_log.key_from_flywheel(row, config)
+
+
+def test_flywheel_key_timezone():
+    config = transfer_log.Config({
+        'query': [{
+            'session.timestamp': 'Date',
+            'timeformat': '%b %d, %Y',
+            'timezone': 'Not_a_timezone'
+        }]
+    })
+    row = {
+        'session.label': 'ses-1',
+        'session.timestamp': str(datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
+    }
     expected_key = 'Jan 01, 1970',
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
