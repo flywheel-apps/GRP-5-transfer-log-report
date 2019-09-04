@@ -69,7 +69,7 @@ class Query(object):
         self.pattern = document.get('pattern')
         self.timeformat = document.get('timeformat')
         self.timezone = document.get('timezone')
-        self.validate = document.get('validate')
+        self.validate = document.get('validate') or self.pattern
 
 
 class Config(object):
@@ -79,8 +79,19 @@ class Config(object):
         Args:
             config_doc (dict): A dictionary representation of the config
         """
-        self.queries = [ Query(q) for q in config_doc.get('query', [])]
-        self.join = config_doc.get('join', 'project')
+        self.queries = []
+        self.defualt_queries = {
+            'acquisition.id': Query({'acquisition.id': False})
+        }
+        for query_doc in config_doc.get('query', []):
+            query = Query(query_doc)
+            self.queries.append(query)
+            # Remove default query if it's being set
+            self.defualt_queries.pop(query.field)
+
+        self.queries += self.defualt_queries.values()
+
+        self.join = config_doc.get('join', 'session')
         self.mappings = {}
         for value, keys in config_doc.get('mappings', {}).items():
             for key in keys:
@@ -219,9 +230,8 @@ def get_hierarchy(client, config, project_id):
     # with client.read_view_data(view, project_id) as resp:
     #     flywheel_table = json.load(resp)
     if get_original_timezone:
-        flywheel_table['session.timestamp'] =  \
-            flywheel_table.apply(lambda row: datetime.datetime.fromisoformat(row['session.timestamp']).astimezone(tz.gettz(row['session.timezone'])).isoformat(),
-                                 axis=1)
+        flywheel_table['session.timestamp'] = flywheel_table.apply(convert_timezones,
+                                                                   axis=1)
     flywheel_table = flywheel_table.to_dict(orient='records')
     print('Hi')
 
@@ -230,6 +240,25 @@ def get_hierarchy(client, config, project_id):
         for row in flywheel_table
         if pd.isna(row.get(deleted_key))
     }
+
+
+def convert_timezones(row):
+    """Modifies the session.timestamp to isoformat UTC from the original timezone,
+        given by session.timezone
+
+    Args:
+        row (pandas.Series): A single row in a dataframe flywheel table
+
+    Returns
+        str: The session timestamp in the correct UTC
+    """
+    if row['session.timestamp'] is not None:
+        if row['session.timezone'] is not None:
+            return datetime.datetime.fromisoformat(row['session.timestamp']).astimezone(tz.gettz(row['session.timezone'])).isoformat()
+        else:
+            return datetime.datetime.fromisoformat(row['session.timestamp']).isoformat()
+    else:
+        return row['session.timestamp']
 
 
 def load_metadata(metadata_path, config):
@@ -359,13 +388,29 @@ def check_config_and_log_match(config, raw_metadata):
     if not errors:
         for index, row in enumerate(raw_metadata):
             for query in config.queries:
-                if query.validate and not re.search(query.validate, str(row[query.value])):
-                    errors.append({
-                        'row': index + 2,
-                        'column': query.value,
-                        'error': 'Value {} does not match {}'.format(row[query.value],
-                                                                     query.validate)
-                    })
+                if query.validate:
+                    match = re.search(query.validate, str(row[query.value]))
+                    if not match:
+                        errors.append({
+                            'row': index + 2,
+                            'column': query.value,
+                            'error': 'Value {} does not match {}'.format(row[query.value],
+                                                                         query.validate)
+                        })
+                    value = match.group(0).strip()
+                else:
+                    value = str(row[query.value])
+                if query.timeformat:
+                    try:
+                        datetime.datetime.strptime(query.timeformat, str(value))
+                    except Exception:
+                        errors.append({
+                            'row': index + 2,
+                            'column': query.value,
+                            'error': 'Value {} does not match {}'.format(row[query.value],
+                                                                         query.timeformat)
+                        })
+
     return errors
 
 
