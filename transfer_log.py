@@ -69,7 +69,7 @@ class Query(object):
         self.pattern = document.get('pattern')
         self.timeformat = document.get('timeformat')
         self.timezone = document.get('timezone')
-        self.validate = document.get('validate') or self.pattern
+        self.validate = document.get('validate', self.pattern)
 
 
 class Config(object):
@@ -87,7 +87,7 @@ class Config(object):
             query = Query(query_doc)
             self.queries.append(query)
             # Remove default query if it's being set
-            self.defualt_queries.pop(query.field)
+            self.defualt_queries.pop(query.field, None)
 
         self.queries += self.defualt_queries.values()
 
@@ -130,7 +130,9 @@ def key_from_flywheel(row, config):
             str|NoneType: The formated value
         """
         value = row.get(query.field)
-        if query.timeformat is not None:
+        if value is None:
+            return value
+        elif query.timeformat is not None:
             try:
                 timestamp = datetime.datetime.fromisoformat(value)
                 timezone = tz.gettz(query.timezone)
@@ -141,8 +143,6 @@ def key_from_flywheel(row, config):
                 raise ValueError('Cannot parse time from non-iso timestamp {}={}'.format(
                     query.field, value
                 ))
-        elif value is None:
-            return value
         else:
             return config.mappings.get(str(value), str(value))
 
@@ -233,7 +233,6 @@ def get_hierarchy(client, config, project_id):
         flywheel_table['session.timestamp'] = flywheel_table.apply(convert_timezones,
                                                                    axis=1)
     flywheel_table = flywheel_table.to_dict(orient='records')
-    print('Hi')
 
     return {
         key_from_flywheel(row, config): client.get(row['{}.id'.format(container_type)])
@@ -253,7 +252,7 @@ def convert_timezones(row):
         str: The session timestamp in the correct UTC
     """
     if row['session.timestamp'] is not None:
-        if row['session.timezone'] is not None:
+        if isinstance(row['session.timezone'], str):
             return datetime.datetime.fromisoformat(row['session.timestamp']).astimezone(tz.gettz(row['session.timezone'])).isoformat()
         else:
             return datetime.datetime.fromisoformat(row['session.timestamp']).isoformat()
@@ -398,23 +397,23 @@ def check_config_and_log_match(config, raw_metadata):
                                                                          query.validate)
                         })
                     value = match.group(0).strip()
-                else:
+                elif query.value != False:
                     value = str(row[query.value])
                 if query.timeformat:
                     try:
-                        datetime.datetime.strptime(query.timeformat, str(value))
+                        datetime.datetime.strptime(str(value), query.timeformat)
                     except Exception:
                         errors.append({
                             'row': index + 2,
                             'column': query.value,
-                            'error': 'Value {} does not match {}'.format(row[query.value],
-                                                                         query.timeformat)
+                            'error': 'Timeformat {} does not match {}'.format(value,
+                                                                              query.timeformat)
                         })
 
     return errors
 
 
-def main(client, config_path, log_level, metadata, project_path):
+def main(client, config_path, log_level, metadata, project_path, dry_run=False):
     """Query flywheel for a set of containers base on a tabular file and a
     yaml template on how to use the csv file
 
@@ -453,8 +452,9 @@ def main(client, config_path, log_level, metadata, project_path):
         if not container.info.get('tranfer_log', {}).get('valid'):
             errors.append(create_unexpected_error(container, client))
 
-    for container in found_containers:
-        container.update_info({'transfer_log': {'valid': True}})
+    if not dry_run:
+        for container in found_containers:
+            container.update_info({'transfer_log': {'valid': True}})
 
     return errors
 
@@ -483,6 +483,7 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--api-key', help='Use if not logged in via cli')
     parser.add_argument('--output', '-o', help='Output file csv')
+    parser.add_argument('--dry-run', action='store_true', help='Will not update validity of transfer log')
 
     args = parser.parse_args()
     # Path may be fw://<group_id>/<project_label>
@@ -501,7 +502,7 @@ if __name__ == '__main__':
         log_level = 'INFO'
 
     try:
-        errors = main(fw, args.config, log_level, args.metadata, path)
+        errors = main(fw, args.config, log_level, args.metadata, path, dry_run=args.dry_run)
     except TransferLogException as e:
         create_output_file(e.errors, 'error-transfer-log.csv',
                            validate_transfer_log=True)
