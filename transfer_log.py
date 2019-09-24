@@ -138,13 +138,14 @@ def key_from_flywheel(row, config):
                 timezone = tz.gettz(query.timezone)
                 if timezone and query.timezone:
                     timestamp = timestamp.astimezone(timezone)
-                return timestamp.strftime(query.timeformat)
+                value = timestamp.strftime(query.timeformat)
             except ValueError as e:
                 raise ValueError('Cannot parse time from non-iso timestamp {}={}'.format(
                     query.field, value
                 ))
         else:
-            return config.mappings.get(str(value), str(value))
+            value = config.mappings.get(str(value), str(value))
+        return value.lower()
 
     return tuple([format_value(query) for query in config.queries])
 
@@ -194,10 +195,10 @@ def key_from_metadata(row, config):
         elif query.pattern:
             match = re.search(query.pattern, value)
             if match:
-                return match.group(0).strip()
+                value = match.group(0).strip()
         elif query.field == 'subject.label' and isinstance(value, float):
-            return str(int(value))
-        return str(value)
+            value = str(int(value))
+        return str(value).lower()
 
     return tuple([format_value(query) for query in config.queries])
 
