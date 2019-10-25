@@ -186,3 +186,24 @@ def test_formatting_flywheel_key():
     expected_key = None, 'Project Label'
     assert expected_key == transfer_log.format_flywheel_key(flywheel_key, config)
 
+
+def test_flywheel_key_with_flywheel_items_and_case():
+    config = transfer_log.Config({
+        'query': [{'session.label': False}, {'project.label': 'Project'}],
+        'join': 'session',
+    })
+    row = {'session.label': 'ses-1', 'project.label': 'My Project'}
+
+    expected_key = 'ses-1', 'my project', None
+    assert expected_key == transfer_log.key_from_flywheel(row, config, True)
+
+
+def test_metadata_key_with_flywheel_items_and_case():
+    config = transfer_log.Config({
+        'query': [{'session.label': False}, {'project.label': 'Label'}, {'acquisition.id': False}],
+        'join': 'acquisition'
+    })
+    row = {'session.label': 'ses-01', 'Label': 'Project Label'}
+
+    expected_key = None, 'project label', None
+    assert expected_key == transfer_log.key_from_metadata(row, config, True)

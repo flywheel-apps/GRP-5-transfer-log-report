@@ -1,12 +1,12 @@
 {
   "name": "transfer-log-report",
   "label": "Transfer Log Report Validation",
-  "description": "Validate that the data in the transfer report log exists within a given project. Outputs a csv file with the fields: 'error', 'path',  'type', 'resolved', 'label', '_id'. ",
-  "version": "0.2.7",
+  "description": "Validate that data referenced within a transfer report log exists within a given project. This Gear outputs a csv file with the fields: 'error', 'path',  'type', 'resolved', 'label', '_id'. ",
+  "version": "0.2.8",
   "custom": {
     "gear-builder": {
       "category": "analysis",
-      "image": "flywheel/transfer-log-report:0.2.7"
+      "image": "flywheel/transfer-log-report:0.2.8"
     },
     "flywheel": {
       "suite": "Metadata Import and Validation"
@@ -39,11 +39,20 @@
     "file_type": {
       "default": "csv",
       "description": "File Type of output report (json or csv).",
-      "type": "string"
+      "type": "string",
+      "enum": [
+          "csv",
+          "json"
+        ]
+    },
+    "case_insensitive": {
+      "default": false,
+      "description": "Whether to make post-regex comparisons case-insensitive.",
+      "type": "boolean"
     },
     "filename": {
       "default": "",
-      "description": "Name for output report (optional).",
+      "description": "Name for output report (optional, defaults to 'transfer-log-report').",
       "type": "string"
     }
   },
@@ -57,8 +66,7 @@
   "command": "python run.py",
   "author": "Flywheel",
   "maintainer": "Flywheel <support@flywheel.io>",
-  "cite": "List citations here.",
   "license": "Other",
-  "source": "https://github.com/flywheel-apps/transfer-log-report",
-  "url": ""
+  "source": "https://github.com/flywheel-apps/GRP-5-transfer-log-report/releases",
+  "url": "https://github.com/flywheel-apps/GRP-5-transfer-log-report"
 }

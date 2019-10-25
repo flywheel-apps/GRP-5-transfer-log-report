@@ -1,4 +1,4 @@
-flywheel-sdk==6.3.0
+flywheel-sdk==10.1.0
 pyyaml
 pandas
 xlrd

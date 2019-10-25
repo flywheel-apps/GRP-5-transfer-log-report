@@ -4,6 +4,7 @@ import copy
 import csv
 import datetime
 import flywheel
+import json
 import logging
 import os
 
@@ -11,7 +12,7 @@ import transfer_log
 import utils
 
 
-log = logging.getLogger('grp-2')
+log = logging.getLogger('grp-5_transfer_log_report')
 
 
 def create_missing_session_error(session_key):
@@ -120,10 +121,8 @@ def main():
 
         # Run the metadata script
         try:
-            transfer_report = transfer_log.main(gear_context.client,
-                                                gear_context.get_input_path('template'),
+            transfer_report = transfer_log.main(gear_context,
                                                 'DEBUG',
-                                                gear_context.get_input_path('transfer_log'),
                                                 parent_path)
         except transfer_log.TransferLogException as e:
             create_output_file(e.errors, 'csv', gear_context,

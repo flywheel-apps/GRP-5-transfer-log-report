@@ -112,7 +112,7 @@ def load_config_file(file_path):
     return Config(config_doc)
 
 
-def key_from_flywheel(row, config):
+def key_from_flywheel(row, config, case_insensitive=False):
     """Convert a flywheel row to a tuple base on what we will be querying
 
     Args:
@@ -121,7 +121,7 @@ def key_from_flywheel(row, config):
     Returns:
         tuple: The key to lookup on
     """
-    def format_value(query):
+    def format_value(query, case_insensitive=False):
         """Parse a value to a datetime if required by the query
 
         Args:
@@ -145,9 +145,12 @@ def key_from_flywheel(row, config):
                 ))
         else:
             value = config.mappings.get(str(value), str(value))
-        return value.lower()
+        if case_insensitive:
+            return value.lower()
+        else:
+            return value
 
-    return tuple([format_value(query) for query in config.queries])
+    return tuple([format_value(query, case_insensitive) for query in config.queries])
 
 
 def format_flywheel_key(key, config):
@@ -168,7 +171,7 @@ def format_flywheel_key(key, config):
     return tuple(new_key)
 
 
-def key_from_metadata(row, config):
+def key_from_metadata(row, config, case_insensitive=False):
     """Convert a metadata row to a tuple base on what we will be querying
 
     Args:
@@ -177,7 +180,7 @@ def key_from_metadata(row, config):
     Returns:
         tuple: The key to lookup on
     """
-    def format_value(query):
+    def format_value(query, case_insensitive=False):
         """Match a pattern on a value
 
         Args:
@@ -198,16 +201,20 @@ def key_from_metadata(row, config):
                 value = match.group(0).strip()
         elif query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
-        return str(value).lower()
+        if case_insensitive:
+            return str(value).lower()
+        else:
+            return str(value)
 
-    return tuple([format_value(query) for query in config.queries])
+    return tuple([format_value(query, case_insensitive) for query in config.queries])
 
 
-def get_hierarchy(client, config, project_id):
+def get_hierarchy(client, config, project_id, case_insensitive=False):
     """Load a dictionary with indexes to easily query the project
 
     Args:
         client (Client): The flywheel sdk client
+        case_insensitive (bool): whether to map with case-insensitivity
         config (dict): The config dictionary
         project_id (str): The id of th project to migrate metadata to
     Returns:
@@ -236,7 +243,7 @@ def get_hierarchy(client, config, project_id):
     flywheel_table = flywheel_table.to_dict(orient='records')
 
     return {
-        key_from_flywheel(row, config): client.get(row['{}.id'.format(container_type)])
+        key_from_flywheel(row, config, case_insensitive): client.get(row['{}.id'.format(container_type)])
         for row in flywheel_table
         if pd.isna(row.get(deleted_key))
     }
@@ -261,12 +268,13 @@ def convert_timezones(row):
         return row['session.timestamp']
 
 
-def load_metadata(metadata_path, config):
+def load_metadata(metadata_path, config, case_insensitive=False):
     """Loads and formats the metadata to conform to how the flywheel metadata
     object is
 
     Args:
         metadata_path (str): Path to the metadata file
+        case_insensitive (bool): whether to map with case-insensitivity
         config (Config): The config object
     Returns:
         dict: a mapping of tuples to metadata rows
@@ -298,7 +306,7 @@ def load_metadata(metadata_path, config):
         if errors:
             raise TransferLogException('Malformed Transfer Log', errors=errors)
 
-    return {key_from_metadata(row, config): i + 2 for i, row in enumerate(raw_metadata)}
+    return {key_from_metadata(row, config, case_insensitive): i + 2 for i, row in enumerate(raw_metadata)}
 
 
 def validate_flywheel_against_metadata(flywheel_table, metadata, config):
@@ -414,17 +422,26 @@ def check_config_and_log_match(config, raw_metadata):
     return errors
 
 
-def main(client, config_path, log_level, metadata, project_path, dry_run=False):
+def main(gear_context, log_level, project_path, dry_run=False):
     """Query flywheel for a set of containers base on a tabular file and a
     yaml template on how to use the csv file
 
     Args:
-        client (Client): A flywheel sdk client
-        config_path (str): Path to the yaml config file
+        gear_context (GearContext): the flywheel gear context object
         log_level (str|int): A logging level (DEBUG, INFO) or int (10, 50)
-        metadata (str): Path to the metadata file
         project_path (str): The resolver path to the project
     """
+    if isinstance(gear_context, dict):
+        client = gear_context.get('client')
+        config_path = gear_context.get('template')
+        metadata = gear_context.get('transfer_log')
+        case_insensitive = gear_context.get('case_insensitive')
+    else:
+        # Extract values from gear_context
+        client = gear_context.client
+        config_path = gear_context.get_input_path('template')
+        metadata = gear_context.get_input_path('transfer_log')
+        case_insensitive = gear_context.config.get('case_insensitive')
 
     # Load in the config yaml input
     config = load_config_file(config_path)
@@ -433,14 +450,15 @@ def main(client, config_path, log_level, metadata, project_path, dry_run=False):
     log.setLevel(log_level)
 
     # Load in the tabular data
-    input_metadata = load_metadata(metadata, config)
+    input_metadata = load_metadata(metadata, config, case_insensitive)
+    log.debug(f'transfer_log_values:{input_metadata.keys()}')
 
     log.debug('Project path is {}'.format(project_path))
     project = client.lookup(project_path)
 
     # Load in the flywheel hierarchy as tabular data
-    flywheel_table = get_hierarchy(client, config, project.id)
-    log.debug(flywheel_table.keys())
+    flywheel_table = get_hierarchy(client, config, project.id, case_insensitive)
+    log.debug(f'flywheel_values: {flywheel_table.keys()}')
 
     missing_containers, found_containers, unexpected_containers = \
         validate_flywheel_against_metadata(flywheel_table, input_metadata, config)
@@ -481,6 +499,7 @@ if __name__ == '__main__':
     parser.add_argument('path', help='Resolver path of the project')
     parser.add_argument('metadata', help='tabular file containing metadata')
     parser.add_argument('config', help='YAML file to map the xnat metadata')
+    parser.add_argument('--case_insensitive', action='store_true')
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--api-key', help='Use if not logged in via cli')
     parser.add_argument('--output', '-o', help='Output file csv')
@@ -503,7 +522,10 @@ if __name__ == '__main__':
         log_level = 'INFO'
 
     try:
-        errors = main(fw, args.config, log_level, args.metadata, path, dry_run=args.dry_run)
+        gear_context = {'client': fw, 'case_insensitive': args.case_insensitive, 'template': args.config,
+                        'transfer_log': args.metadata}
+        errors = main(gear_context, log_level, path, dry_run=args.dry_run)
+
     except TransferLogException as e:
         create_output_file(e.errors, 'error-transfer-log.csv',
                            validate_transfer_log=True)
