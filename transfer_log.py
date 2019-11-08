@@ -230,9 +230,10 @@ def get_hierarchy(client, config, project_id, case_insensitive=False):
         columns.append('session.timezone')
     if container_type == 'acquisition':
         view = client.View(columns=columns, container=container_type,
-                       filename='*.zip', process_files=False, match='all')
+                       filename='*.zip', process_files=False, match='all',
+                       sort=False)
     else:
-        view = client.View(columns=columns)
+        view = client.View(columns=columns, sort=False)
 
     flywheel_table = client.read_view_dataframe(view, project_id)
     # with client.read_view_data(view, project_id) as resp:
