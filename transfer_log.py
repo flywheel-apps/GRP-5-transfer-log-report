@@ -201,6 +201,8 @@ def key_from_metadata(row, config, case_insensitive=False):
                 value = match.group(0).strip()
         elif query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
+        if query.timeformat:
+            value = datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)
         if case_insensitive:
             return str(value).lower()
         else:
