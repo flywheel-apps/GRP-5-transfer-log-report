@@ -13,7 +13,7 @@ def test_flywheel_key():
     })
     row = {'session.label': 'ses-1', 'project.label': 'My Project'}
 
-    expected_key = 'ses-1', 'My Project'
+    expected_key = ['ses-1'], ['My Project'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -27,7 +27,7 @@ def test_flywheel_key_timestamp():
         'session.timestamp': str(datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
     }
 
-    expected_key = 'Jan 01, 1970',
+    expected_key = ['Jan 01, 1970'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -43,7 +43,7 @@ def test_flywheel_key_timestamp_timezone():
         'session.label': 'ses-1',
         'session.timestamp': str(datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
     }
-    expected_key = 'Dec 31, 1969',
+    expected_key = ['Dec 31, 1969'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -59,7 +59,7 @@ def test_flywheel_key_timezone():
         'session.label': 'ses-1',
         'session.timestamp': str(datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc))
     }
-    expected_key = 'Jan 01, 1970',
+    expected_key = ['Jan 01, 1970'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -72,7 +72,7 @@ def test_flywheel_key_missing_key():
         'session.label': 'ses-1',
     }
 
-    expected_key = None,
+    expected_key = None, None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -99,7 +99,7 @@ def test_metadata_key():
     })
     row = {'Label': 'ses-1', 'Project': 'My Project'}
 
-    expected_key = 'ses-1', 'My Project'
+    expected_key = ['ses-1'], ['My Project'], None
     assert expected_key == transfer_log.key_from_metadata(row, config)
 
 
@@ -110,7 +110,7 @@ def test_metadata_key_pattern():
     })
     row = {'Date': 'MR - Jan 01, 1970'}
 
-    expected_key = 'Jan 01, 1970',
+    expected_key = ['Jan 01, 1970'], None
     assert expected_key == transfer_log.key_from_metadata(row, config)
 
 
@@ -121,8 +121,9 @@ def test_metadata_missing_pattern_key():
     })
     row = {'Label': 'ses-1'}
 
-    expected_key = None,
+    expected_key = None, None
     assert expected_key == transfer_log.key_from_metadata(row, config)
+
 
 def test_config_mappings():
     config = transfer_log.Config({
@@ -134,9 +135,26 @@ def test_config_mappings():
     })
 
     assert config.mappings == {
-        'w04': 'Week 4',
-        'wk4': 'Week 4',
-        'Week_4': 'Week 4'
+        'w04': ['Week 4'],
+        'wk4': ['Week 4'],
+        'Week_4': ['Week 4']
+    }
+
+
+def test_config_mappings_with_duplicates():
+    config = transfer_log.Config({
+        'query': [{'session.label': 'Label'}, {'project.label': 'Project'}],
+        'join': 'session',
+        'mappings': {
+            'Week 4': ['w04', 'wk4', 'Week_4'],
+            'Week_4': ['w04', 'wk4']
+        }
+    })
+
+    assert config.mappings == {
+        'w04': ['Week 4', 'Week_4'],
+        'wk4': ['Week 4', 'Week_4'],
+        'Week_4': ['Week 4']
     }
 
 
@@ -150,7 +168,7 @@ def test_flywheel_mappings():
     })
     row = {'session.label': 'w04', 'project.label': 'My Project'}
 
-    expected_key = 'Week 4', 'My Project'
+    expected_key = ['Week 4'], ['My Project'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -161,7 +179,7 @@ def test_flywheel_key_with_flywheel_items():
     })
     row = {'session.label': 'ses-1', 'project.label': 'My Project'}
 
-    expected_key = 'ses-1', 'My Project'
+    expected_key = ['ses-1'], ['My Project'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config)
 
 
@@ -172,7 +190,7 @@ def test_metadata_key_with_flywheel_items():
     })
     row = {'session.label': 'ses-01', 'Label': 'Project Label'}
 
-    expected_key = None, 'Project Label', None
+    expected_key = None, ['Project Label'], None
     assert expected_key == transfer_log.key_from_metadata(row, config)
 
 
@@ -194,7 +212,7 @@ def test_flywheel_key_with_flywheel_items_and_case():
     })
     row = {'session.label': 'ses-1', 'project.label': 'My Project'}
 
-    expected_key = 'ses-1', 'my project', None
+    expected_key = ['ses-1'], ['my project'], None
     assert expected_key == transfer_log.key_from_flywheel(row, config, True)
 
 
@@ -205,5 +223,5 @@ def test_metadata_key_with_flywheel_items_and_case():
     })
     row = {'session.label': 'ses-01', 'Label': 'Project Label'}
 
-    expected_key = None, 'project label', None
+    expected_key = None, ['project label'], None
     assert expected_key == transfer_log.key_from_metadata(row, config, True)

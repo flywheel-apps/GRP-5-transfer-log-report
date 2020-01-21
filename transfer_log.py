@@ -7,11 +7,10 @@ import csv
 import datetime
 import flywheel
 import logging
-import json
+import itertools
 import os
 import pandas as pd
 import re
-import sys
 import xlrd
 import yaml
 
@@ -80,22 +79,25 @@ class Config(object):
             config_doc (dict): A dictionary representation of the config
         """
         self.queries = []
-        self.defualt_queries = {
+        self.default_queries = {
             'acquisition.id': Query({'acquisition.id': False})
         }
         for query_doc in config_doc.get('query', []):
             query = Query(query_doc)
             self.queries.append(query)
             # Remove default query if it's being set
-            self.defualt_queries.pop(query.field, None)
+            self.default_queries.pop(query.field, None)
 
-        self.queries += self.defualt_queries.values()
+        self.queries += self.default_queries.values()
 
         self.join = config_doc.get('join', 'session')
         self.mappings = {}
         for value, keys in config_doc.get('mappings', {}).items():
             for key in keys:
-                self.mappings[key] = value
+                if key in self.mappings:
+                    self.mappings[key].append(value)
+                else:
+                    self.mappings[key] = [value]
 
 
 def load_config_file(file_path):
@@ -107,7 +109,7 @@ def load_config_file(file_path):
         Config: A config object
     """
     with open(file_path, 'r') as fp:
-        config_doc = yaml.load(fp)
+        config_doc = yaml.load(fp, Loader=yaml.SafeLoader)
 
     return Config(config_doc)
 
@@ -131,22 +133,29 @@ def key_from_flywheel(row, config, case_insensitive=False):
         """
         value = row.get(query.field)
         if value is None:
-            return value
+            return None
         elif query.timeformat is not None:
             try:
                 timestamp = datetime.datetime.fromisoformat(value)
                 timezone = tz.gettz(query.timezone)
                 if timezone and query.timezone:
                     timestamp = timestamp.astimezone(timezone)
-                value = timestamp.strftime(query.timeformat)
+                value = [timestamp.strftime(query.timeformat)]
             except ValueError as e:
                 raise ValueError('Cannot parse time from non-iso timestamp {}={}'.format(
                     query.field, value
                 ))
         else:
-            value = config.mappings.get(str(value), str(value))
+            value = config.mappings.get(str(value), [str(value)])
+
+        if not isinstance(value, list):
+            if isinstance(value, str):
+                value = [value]
+            else:
+                value = list(value)
+
         if case_insensitive:
-            return value.lower()
+            return [v.lower() for v in value]
         else:
             return value
 
@@ -186,7 +195,7 @@ def key_from_metadata(row, config, case_insensitive=False):
         Args:
             query (Query): A query from the config
         Returns:
-            str|NoneType: The formated value
+            str|NoneType: The formatted value
         """
         if query.value is False:
             # This is a flywheel only field in order to differentiate the acquisitions
@@ -194,19 +203,32 @@ def key_from_metadata(row, config, case_insensitive=False):
             return None
         value = row.get(query.value)
         if value is None:
-            return value
+            return None
         elif query.pattern:
             match = re.search(query.pattern, value)
             if match:
-                value = match.group(0).strip()
+                try:
+                    value = match.group(0).strip()
+                except AttributeError:
+                    pass
         elif query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
-        if query.timeformat:
-            value = datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)
-        if case_insensitive:
-            return str(value).lower()
         else:
-            return str(value)
+            value = str(value)
+
+        if query.timeformat:
+            value = [datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)]
+
+        if not isinstance(value, list):
+            if isinstance(value, str):
+                value = [value]
+            else:
+                value = list(value)
+
+        if case_insensitive:
+            return [str(v).lower() for v in value]
+        else:
+            return value
 
     return tuple([format_value(query, case_insensitive) for query in config.queries])
 
@@ -216,9 +238,9 @@ def get_hierarchy(client, config, project_id, case_insensitive=False):
 
     Args:
         client (Client): The flywheel sdk client
-        case_insensitive (bool): whether to map with case-insensitivity
-        config (dict): The config dictionary
+        config (Config): The config object
         project_id (str): The id of th project to migrate metadata to
+        case_insensitive (bool): whether to map with case-insensitivity
     Returns:
         dict: a mapping of tuples to flywheel sdk containers
     """
@@ -245,11 +267,12 @@ def get_hierarchy(client, config, project_id, case_insensitive=False):
                                                                    axis=1)
     flywheel_table = flywheel_table.to_dict(orient='records')
 
-    return {
-        key_from_flywheel(row, config, case_insensitive): client.get(row['{}.id'.format(container_type)])
-        for row in flywheel_table
-        if pd.isna(row.get(deleted_key))
-    }
+    metadata = dict()
+    for i, row in enumerate(flywheel_table):
+        if pd.isna(row.get(deleted_key)):
+            metadata.update(expand_keys(key_from_flywheel(row, config, case_insensitive),
+                                        client.get(row['{}.id'.format(container_type)])))
+    return metadata
 
 
 def convert_timezones(row):
@@ -269,6 +292,23 @@ def convert_timezones(row):
             return datetime.datetime.fromisoformat(row['session.timestamp']).isoformat()
     else:
         return row['session.timestamp']
+
+
+def expand_keys(lol, val):
+    """Return expanded key from metadata with assigned value
+
+    The key_from_metadata comes as a tuple with following format e.g. (['val1'], ['val2', 'val3'], None)
+    This needs to be converted to non-iterable so that it can be hashed and used as keys for matching
+
+    Args:
+        lol (tuple): Array of array
+        val (any): Any value
+
+    Returns:
+        dict: Dictionary of key/value with key expanded combination of lol
+    """
+    lists_to_massage = [x if isinstance(x, list) else [x] for x in lol]
+    return {x: val for x in list(itertools.product(*lists_to_massage))}
 
 
 def load_metadata(metadata_path, config, case_insensitive=False):
@@ -309,7 +349,11 @@ def load_metadata(metadata_path, config, case_insensitive=False):
         if errors:
             raise TransferLogException('Malformed Transfer Log', errors=errors)
 
-    return {key_from_metadata(row, config, case_insensitive): i + 2 for i, row in enumerate(raw_metadata)}
+    metadata = dict()
+    for i, row in enumerate(raw_metadata):
+        metadata.update(expand_keys(key_from_metadata(row, config, case_insensitive), i + 2))
+
+    return metadata
 
 
 def validate_flywheel_against_metadata(flywheel_table, metadata, config):
@@ -408,7 +452,10 @@ def check_config_and_log_match(config, raw_metadata):
                             'error': 'Value {} does not match {}'.format(row[query.value],
                                                                          query.validate)
                         })
-                    value = match.group(0).strip()
+                    try:
+                        value = match.group(0).strip()
+                    except AttributeError:
+                        pass
                 elif query.value != False:
                     value = str(row[query.value])
                 if query.timeformat:

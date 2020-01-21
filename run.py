@@ -1,12 +1,9 @@
 #!/usr/bin/env python
-
-import copy
 import csv
 import datetime
 import flywheel
 import json
 import logging
-import os
 
 import transfer_log
 import utils

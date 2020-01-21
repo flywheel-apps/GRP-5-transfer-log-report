@@ -1,21 +1,25 @@
+from pathlib import Path
 import datetime
+import itertools
 import pytest
 import mock
+import pandas as pd
 
 import transfer_log
 
 DATE = datetime.datetime.now()
+DATA_ROOT = Path(__file__).parent / 'data'
 
 
 def test_validate_project():
-    flywheel_table = {('a','b','c'): 'ses-1', ('a','B','C'): 'ses-2'}
-    metadata = {('a','b','c'): 'row1', ('a','B','C'): 'row2'}
+    flywheel_table = {('a', 'b', 'c'): 'ses-1', ('a', 'B', 'C'): 'ses-2'}
+    metadata = {('a', 'b', 'c'): 'row1', ('a', 'B', 'C'): 'row2'}
     config = transfer_log.Config({
-        'query': [{'a':'a'}, {'b':'b'}, {'c':'c'}],
+        'query': [{'a': 'a'}, {'b': 'b'}, {'c': 'c'}],
         'join': 'session'
     })
 
-    missing_containers, found_containers, unexpected_containers =  \
+    missing_containers, found_containers, unexpected_containers = \
         transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
                                                         config)
 
@@ -28,17 +32,16 @@ def test_validate_project():
 
 
 def test_validate_project_with_missing_sessions():
-    flywheel_table = {('a','b','c'): 'ses-1'}
-    metadata = {('a','b','c'): 'row1', ('a','B','C'): 'row2'}
+    flywheel_table = {('a', 'b', 'c'): 'ses-1'}
+    metadata = {('a', 'b', 'c'): 'row1', ('a', 'B', 'C'): 'row2'}
     config = transfer_log.Config({
-        'query': [{'a':'a'}, {'b':'b'}, {'c':'c'}],
+        'query': [{'a': 'a'}, {'b': 'b'}, {'c': 'c'}],
         'join': 'session'
     })
 
-    missing_containers, found_containers, unexpected_containers =  \
+    missing_containers, found_containers, unexpected_containers = \
         transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
                                                         config)
-
 
     assert len(missing_containers) == 1
     assert missing_containers[('a', 'B', 'C')] == 'row2'
@@ -48,17 +51,16 @@ def test_validate_project_with_missing_sessions():
 
 
 def test_validate_project_with_unexpected_sessions():
-    flywheel_table = {('a','b','c'): 'ses-1', ('a','B','C'): 'ses-2'}
-    metadata = {('a','b','c'): 'row1'}
+    flywheel_table = {('a', 'b', 'c'): 'ses-1', ('a', 'B', 'C'): 'ses-2'}
+    metadata = {('a', 'b', 'c'): 'row1'}
     config = transfer_log.Config({
-        'query': [{'a':'a'}, {'b':'b'}, {'c':'c'}],
+        'query': [{'a': 'a'}, {'b': 'b'}, {'c': 'c'}],
         'join': 'session'
     })
 
-    missing_containers, found_containers, unexpected_containers =  \
+    missing_containers, found_containers, unexpected_containers = \
         transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
                                                         config)
-
 
     assert len(missing_containers) == 0
     assert len(found_containers) == 1
@@ -70,12 +72,12 @@ def test_validate_project_with_unexpected_sessions():
 def test_create_missing_error():
     key = ('a', 'b', 'c')
     container_type = 'session'
-    expected_error_msg = 'session (\'a\', \'b\', \'c\') missing from flywheel'
+    expected_error_msg = 'row (\'a\', \'b\', \'c\') missing from flywheel'
 
     assert expected_error_msg == transfer_log.create_missing_error(key, container_type).get('error')
 
 
-def test_create_missing_error():
+def test_create_unexpected_error():
     container = mock.MagicMock(id='id', label='label', container_type='session')
     expected_error = {
         'error': 'session in flywheel not present in transfer log',
@@ -96,17 +98,18 @@ def test_metadata_day_month_missing_zero_pad():
     config = transfer_log.Config(
         {'query': [
             {'subject.info.ClinicalTrialSiteID': 'SITE'},
-            {'subject.label': 'SUBJECT'}, {'session.label': 'VISIT'},
+            {'subject.label': 'SUBJECT'},
+            {'session.label': 'VISIT'},
             {'session.timestamp': 'SCAN DATE', 'timeformat': '%m/%d/%Y'}],
-         'join': 'session'}
+            'join': 'session'}
     )
-    metadata = {transfer_log.key_from_metadata(
+    metadata = transfer_log.expand_keys(transfer_log.key_from_metadata(
         {'SITE': '266099',
          'SUBJECT': '1129',
          'VISIT': 'screening',
          'SCAN DATE': '8/1/2014'},
         config
-    ): 2}
+    ), 2)
     missing_containers, found_containers, unexpected_containers = \
         transfer_log.validate_flywheel_against_metadata(flywheel_table, metadata,
                                                         config)
@@ -114,3 +117,15 @@ def test_metadata_day_month_missing_zero_pad():
     assert len(found_containers) == 1
     assert found_containers[0] == 'ses-1'
     assert len(unexpected_containers) == 0
+
+
+def test_load_metadata():
+    metadata_path = DATA_ROOT / 'test-transfer-log.xlsx'
+    config_path = DATA_ROOT / 'test-transfer-log-template.yml'
+    config = transfer_log.load_config_file(config_path)
+    metadata = transfer_log.load_metadata(metadata_path, config)
+    assert ('10651', 'May 23, 2005', 'Screening', 'MR', None) in metadata.keys()
+    assert ('10651', 'Jun 23, 2005', 'Week 0', 'MR', None) in metadata.keys()
+    assert ('10651', 'Aug 17, 2005', 'Week 12', 'MR', None) in metadata.keys()
+    assert ('10553', 'May 16, 2005', 'Screening', 'MR', None) in metadata.keys()
+    assert ('10553', 'Jul 07, 2005', 'Week 4', 'MR', None) in metadata.keys()

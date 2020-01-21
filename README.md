@@ -1,3 +1,5 @@
+[![CircleCI](https://circleci.com/gh/flywheel-apps/GRP-5-transfer-log-report.svg?style=svg)](https://circleci.com/gh/flywheel-apps/GRP-5-transfer-log-report)
+
 # flywheel/GRP-5-transfer-log-report
 
 GRP-5 is a Flywheel analysis gear to validate existence of data referenced within a transfer report log within a given project. This Gear outputs a csv file with the fields: 'error', 'path',  'type', 'resolved', 'label', '_id'.
