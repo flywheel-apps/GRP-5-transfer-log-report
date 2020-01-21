@@ -92,6 +92,21 @@ def test_create_unexpected_error():
         assert expected_error == transfer_log.create_unexpected_error(container, None)
 
 
+def test_create_empty_error():
+    container = mock.MagicMock(id='id', label='label', container_type='session')
+    expected_error = {
+        'error': 'session in flywheel contains no files',
+        'path': 'Path/to/container',
+        'type': 'session',
+        'resolved': False,
+        'label': 'label',
+        '_id': 'id'
+    }
+    with mock.patch('transfer_log.utils.get_resolver_path',
+                    return_value='Path/to/container'):
+        assert expected_error == transfer_log.create_empty_error(container, None)
+
+
 def test_metadata_day_month_missing_zero_pad():
     flywheel_table = {('266099', '1129', 'screening', '08/01/2014', '5dcd6836c01312003e6512bc'): 'ses-1'}
 

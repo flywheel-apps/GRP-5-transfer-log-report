@@ -398,9 +398,9 @@ def validate_flywheel_against_metadata(flywheel_table, metadata, config):
     return metadata, found_containers, unexpected_containers
 
 
-def create_missing_error(row_number, container_type):
+def create_missing_error(row_number, container_type, extra_info=''):
     return {
-        'error': 'row {} missing from flywheel'.format(row_number),
+        'error': 'row {} missing from flywheel{}'.format(row_number, f' ({extra_info})' if extra_info else ''),
         'path': None,
         'type': container_type,
         'resolved': False,
@@ -418,6 +418,24 @@ def create_unexpected_error(container, client):
         'label': container.label,
         '_id': container.id
     }
+
+
+def create_empty_error(container, client):
+    return {
+        'error': '{} in flywheel contains no files'.format(container.container_type),
+        'path': utils.get_resolver_path(client, container),
+        'type': container.container_type,
+        'resolved': False,
+        'label': container.label,
+        '_id': container.id
+    }
+
+
+def get_key(my_dict, val):
+    for key, value in my_dict.items():
+        if val == value:
+            return key
+    return "key doesn't exist"
 
 
 def check_config_and_log_match(config, raw_metadata):
@@ -510,16 +528,27 @@ def main(gear_context, log_level, project_path, dry_run=False):
     flywheel_table = get_hierarchy(client, config, project.id, case_insensitive)
     log.debug(f'flywheel_values: {flywheel_table.keys()}')
 
+    # Check containers vs transfer log
     missing_containers, found_containers, unexpected_containers = \
-        validate_flywheel_against_metadata(flywheel_table, input_metadata, config)
+        validate_flywheel_against_metadata(flywheel_table, input_metadata.copy(), config)
+
+    # Check for empty containers among unexpected_containers
+    empty_containers = {}
+    for k, v in unexpected_containers.items():
+        container = client.acquisitions.find_one(f'_id={k[-1]}')
+        if not container.files:
+            empty_containers[k] = unexpected_containers.pop(k)
 
     # Generate Report
     errors = []
     for row_number in missing_containers.values():
-        errors.append(create_missing_error(row_number, config.join))
+        errors.append(create_missing_error(row_number, config.join, extra_info=get_key(input_metadata, row_number+1)))
     for container in unexpected_containers.values():
         if not container.info.get('tranfer_log', {}).get('valid'):
             errors.append(create_unexpected_error(container, client))
+    for container in empty_containers.values():
+        if not container.info.get('tranfer_log', {}).get('valid'):
+            errors.append(create_empty_error(container, client))
 
     if not dry_run:
         for container in found_containers:
