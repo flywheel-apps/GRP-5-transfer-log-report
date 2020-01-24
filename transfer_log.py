@@ -13,6 +13,7 @@ import pandas as pd
 import re
 import xlrd
 import yaml
+import pandas as pd
 
 import utils
 
@@ -233,6 +234,51 @@ def key_from_metadata(row, config, case_insensitive=False):
     return tuple([format_value(query, case_insensitive) for query in config.queries])
 
 
+def get_clean_dtypes(client, view, project_id, ignore_cols=None):
+    """Returns curated dtypes dictionary
+
+    Given view, retrieve data from API, remove null values and infer data type and "null-tolerant"
+    pandas data type of remaining rows
+
+    Args:
+        client (object): Flywheel client
+        view (object): Flywheel dataview
+        project_id (str): Flywheel project ID
+        ignore_cols (list, optional): List of column names to ignore when droping rows with null values
+
+    Returns:
+        dict: Dictionary of of data types {column_name: dtype}
+
+    """
+    if ignore_cols is None:
+        ignore_cols = []
+    df_dtypes = {}
+
+    resp = client.read_view_data(view, project_id, decode=False, format='json-flat')
+    if resp:
+        try:
+            # data = resp.data
+            data_l = eval(resp.data.decode().replace('null', 'None'))
+            df = pd.DataFrame(data_l)
+            df.drop(ignore_cols, axis=1, inplace=True)
+            indexes = list(df[df.isna().any(axis=1)].index)
+            for index in sorted(indexes, reverse=True):
+                del data_l[index]
+            df_dtypes.update(pd.DataFrame(data_l).dtypes.to_dict())
+            resp.close()
+        except Exception as exc:
+            log.warning('An exception raises when trying to clean dtypes\n %s', exc)
+            resp.close()
+
+    # replace type with pandas NaN compatible ones
+    # see: https://pandas.pydata.org/pandas-docs/stable/user_guide/integer_na.html
+    for k, v in df_dtypes.items():
+        if v == 'int64':
+            df_dtypes[k] = 'Int64'
+
+    return df_dtypes
+
+
 def get_hierarchy(client, config, project_id, case_insensitive=False):
     """Load a dictionary with indexes to easily query the project
 
@@ -259,7 +305,9 @@ def get_hierarchy(client, config, project_id, case_insensitive=False):
     else:
         view = client.View(columns=columns, sort=False)
 
-    flywheel_table = client.read_view_dataframe(view, project_id)
+    df_dtypes = get_clean_dtypes(client, view, project_id, ignore_cols=[valid_key, deleted_key])
+    flywheel_table = client.read_view_dataframe(view, project_id, opts={'dtype': df_dtypes})
+    flywheel_table = flywheel_table.astype(df_dtypes)
     # with client.read_view_data(view, project_id) as resp:
     #     flywheel_table = json.load(resp)
     if get_original_timezone:
