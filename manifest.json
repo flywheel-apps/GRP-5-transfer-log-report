@@ -1,12 +1,12 @@
 {
   "name": "transfer-log-report",
-  "label": "Transfer Log Report Validation",
+  "label": "GRP-5: Transfer Log Report Validation",
   "description": "Validate existence of data referenced within a transfer report log within a given project. This Gear outputs a csv file with the fields: 'error', 'path',  'type', 'resolved', 'label', '_id'.",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "custom": {
     "gear-builder": {
       "category": "analysis",
-      "image": "flywheel/transfer-log-report:0.3.3"
+      "image": "flywheel/transfer-log-report:0.3.4"
     },
     "flywheel": {
       "suite": "Metadata Import and Validation"
