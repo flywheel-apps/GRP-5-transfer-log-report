@@ -8,6 +8,7 @@ query:
     pattern: "^[^-]+"
   - acquisition.id: false
 join: acquisition
+filename: "*.zip"
 mappings:
   "Week 4":
     - "w04"

@@ -92,6 +92,7 @@ class Config(object):
         self.queries += self.default_queries.values()
 
         self.join = config_doc.get('join', 'session')
+        self.filename = config_doc.get('filename', '*.zip')
         self.mappings = {}
         for value, keys in config_doc.get('mappings', {}).items():
             for key in keys:
@@ -258,7 +259,10 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
     if resp:
         try:
             # data = resp.data
-            data_l = eval(resp.data.decode().replace('null', 'None'))
+            data_l = eval(resp.data.decode()
+                          .replace('null', 'None')
+                          .replace('true', 'True')
+                          .replace('false', 'False'))
             df = pd.DataFrame(data_l)
             df.drop(ignore_cols, axis=1, inplace=True)
             indexes = list(df[df.isna().any(axis=1)].index)
@@ -300,8 +304,8 @@ def get_hierarchy(client, config, project_id, case_insensitive=False):
         columns.append('session.timezone')
     if container_type == 'acquisition':
         view = client.View(columns=columns, container=container_type,
-                       filename='*.zip', process_files=False, match='all',
-                       sort=False)
+                           filename=config.filename, process_files=False, match='all',
+                           sort=False)
     else:
         view = client.View(columns=columns, sort=False)
 
