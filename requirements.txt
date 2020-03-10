@@ -1,5 +1,5 @@
-flywheel-sdk>=11.0.1
-pyyaml
-pandas
-xlrd
-urllib3==1.24.2
+flywheel-sdk~=11.0.1
+PyYAML~=5.3
+pandas~=1.0.1
+xlrd~=1.2.0
+urllib3~=1.24.2
