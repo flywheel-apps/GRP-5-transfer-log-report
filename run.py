@@ -34,26 +34,28 @@ def create_unexpected_session_error(session, client):
     }
 
 
-def create_output_file(error_containers, file_type, gear_context,
+def create_output_file(error_containers, file_type, gear_context, headers=None,
                        output_filename=None, validate_transfer_log=False):
     """Creates the output file from a set of error containers, the file type
     is determined from the config value
 
     Args:
-        containers (str): The container type to describe in the output file
+        error_containers (str): The container type to describe in the output file
         error_containers (list): list of containers that were tagged
         file_type (str): The file type to format the output into
         gear_context (GearContext): the gear context so that we can write out
             the file
         output_filename (str): and optional file name that can be passed
         validate_transfer_log (bool): Use malformed transfer log headers
+        headers(list): list of headers to use for csv
 
     Returns:
         str: The filename that was used to write the report as
     """
     file_ext = 'csv' if file_type == 'csv' else 'json'
     output_filename = output_filename or 'transfer-log-report.{}'.format(file_ext)
-    headers = transfer_log.TRANSFER_LOG_ERROR_HEADERS if validate_transfer_log else transfer_log.CSV_HEADERS
+    if not headers:
+        headers = transfer_log.TRANSFER_LOG_ERROR_HEADERS if validate_transfer_log else transfer_log.CSV_HEADERS
     with gear_context.open_output(output_filename, 'w') as output_file:
         if file_type == 'json':
             json.dump(error_containers, output_file)
@@ -118,18 +120,17 @@ def main():
 
         # Run the metadata script
         try:
-            transfer_report = transfer_log.main(gear_context,
-                                                'DEBUG',
-                                                parent_path)
+            transfer_error_list, header_list = transfer_log.main(gear_context, 'DEBUG', parent_path)
         except transfer_log.TransferLogException as e:
             create_output_file(e.errors, 'csv', gear_context,
                                'error-transfer-log.csv', True)
             raise e
-        error_count = len(transfer_report)
+        error_count = len(transfer_error_list)
 
         log.info('Writing error report')
-        filename = create_output_file(transfer_report, gear_context.config.get('file_type'),
-                                      gear_context, gear_context.config.get('filename'))
+        filename = create_output_file(transfer_error_list, file_type=gear_context.config.get('file_type'),
+                                      gear_context=gear_context, output_filename=gear_context.config.get('filename'),
+                                      headers=header_list)
         log.info('Wrote error report with filename {}'.format(filename))
 
         # Update analysis label

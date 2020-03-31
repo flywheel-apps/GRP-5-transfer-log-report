@@ -1,19 +1,20 @@
 """A Flywheel sdk script to migrate metadata from an xnat csv to a
 Flywheel project that was migrated from xnat
 """
-
+from abc import ABCMeta, abstractmethod
 import argparse
 import csv
 import datetime
 import flywheel
 import logging
+import json
 import itertools
 import os
 import pandas as pd
 import re
 import xlrd
 import yaml
-import pandas as pd
+
 
 import utils
 
@@ -23,13 +24,22 @@ log = logging.getLogger()
 
 
 CSV_HEADERS = [
+    'row_or_id',
     'path',
     'error',
     'type',
     'resolved',
-    'label',
-    '_id'
+    'label'
 ]
+
+ERROR_DICT = {
+    'error': None,
+    'path': None,
+    'type': None,
+    'resolved': False,
+    'label': None,
+    'row_or_id': None
+}
 
 TRANSFER_LOG_ERROR_HEADERS = [
     'row',
@@ -54,6 +64,7 @@ class TransferLogException(Exception):
 
 class Query(object):
     reserved_keys = ['pattern', 'timeformat', 'timezone', 'validate']
+
     def __init__(self, document):
         """Object to represent a single query
 
@@ -88,7 +99,10 @@ class Config(object):
             self.queries.append(query)
             # Remove default query if it's being set
             self.default_queries.pop(query.field, None)
-
+        self.field_dict = dict()
+        for query in self.queries:
+            if query.value:
+                self.field_dict[query.value] = query.field
         self.queries += self.default_queries.values()
 
         self.join = config_doc.get('join', 'session')
@@ -100,6 +114,413 @@ class Config(object):
                     self.mappings[key].append(value)
                 else:
                     self.mappings[key] = [value]
+
+
+def load_transfer_log(metadata_path, config):
+    """Loads and formats the transfer log spreadsheet.
+
+    Args:
+        metadata_path (str): Path to the metadata file
+        config (Config): The config object
+    Returns:
+        list: list of dicts representing the transfer log rows
+    """
+    raw_metadata = []
+
+    extension = os.path.splitext(metadata_path)[1]
+    if extension == '.xlsx':
+        wb = xlrd.open_workbook(metadata_path)
+        sh = wb.sheet_by_index(0)
+        keys = None
+        for row in sh.get_rows():
+            if keys is None:
+                keys = [cell.value for cell in row]
+            else:
+                raw_metadata.append({
+                    keys[i]: row[i].value for
+                    i in range(len(keys))
+                })
+    elif extension == '.csv':
+        with open(metadata_path, 'r') as fp:
+            reader = csv.DictReader(fp)
+            for row in reader:
+                raw_metadata.append(row)
+    else:
+        raise Exception('Filetype "%s" not supported', extension)
+    if raw_metadata:
+        exc_errors = check_config_and_log_match(config, raw_metadata)
+        if exc_errors:
+            raise TransferLogException('Malformed Transfer Log', errors=exc_errors)
+
+    return raw_metadata
+
+
+def load_flywheel_records(client, config, project_id):
+    """Load a dictionary with indexes to easily query the project
+
+    Args:
+        client (Client): The flywheel sdk client
+        config (Config): The config object
+        project_id (str): The id of the project to which to migrate metadata
+    Returns:
+        list: a list of dictionaries representing flywheel records
+    """
+    container_type = config.join
+    valid_key = '{}.info.transfer_log.valid'.format(container_type)
+    deleted_key = '{}.deleted'.format(container_type)
+    columns = [query.field for query in config.queries] + [valid_key, deleted_key]
+    get_original_timezone = False
+    if 'session.timestamp' in columns:
+        get_original_timezone = True
+        columns.append('session.timezone')
+    if container_type == 'acquisition':
+        view = client.View(columns=columns, container=container_type,
+                           filename=config.filename, process_files=False, match='all',
+                           sort=False)
+    else:
+        view = client.View(columns=columns, sort=False)
+
+    df_dtypes = get_clean_dtypes(client, view, project_id, ignore_cols=[valid_key, deleted_key])
+    flywheel_table = client.read_view_dataframe(view, project_id, opts={'dtype': df_dtypes})
+    flywheel_table = flywheel_table.astype(df_dtypes)
+    # with client.read_view_data(view, project_id) as resp:
+    #     flywheel_table = json.load(resp)
+    if get_original_timezone:
+        flywheel_table['session.timestamp'] = flywheel_table.apply(convert_timezones,
+                                                                   axis=1)
+    flywheel_table = flywheel_table.to_dict(orient='records')
+    return flywheel_table
+
+
+class TableRow(object):
+    """
+    Abstract class for representing a record
+
+    Args:
+        config (transfer_log.Config): object representing transfer_log configuration
+        row_dict (dict): a dictionary representing the record
+        index: index at which the record was found (container for FlywheelRow, int for MetadataRow
+        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
+
+    Attributes:
+        config (transfer_log.Config): object representing transfer_log configuration
+        row_dict (dict): a dictionary representing the record
+        index: index at which the record was found (container for FlywheelRow, int for MetadataRow
+        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
+        match_index: index for the matching record from flywheel/transfer log
+
+    """
+    __metaclass__ = ABCMeta
+
+    def __init__(self, config, row_dict, index, case_insensitive):
+        self.config = config
+        self.row_dict = row_dict
+        self.index = index
+        self.case_insensitive = case_insensitive
+        self.match_index = None
+
+    @property
+    @abstractmethod
+    def spreadsheet_index(self):
+        """Index by which to reference the row (container.id for flywheel, index+2 for transfer log)"""
+        pass
+
+    @property
+    def match_dict(self):
+        """
+        Dictionary by which to match table rows
+
+        """
+        match_dict = dict()
+        for query in self.config.queries:
+            if query.value:
+                value = self.row_dict.get(query.field) or self.row_dict.get(query.value)
+                value = self.format_value(query, value)
+                match_dict[query.field] = value
+        return match_dict
+
+    @property
+    def container_type(self):
+        """The Flywheel container type of the row."""
+        container_type = self.config.join
+        return container_type
+
+    @abstractmethod
+    def format_value(self, query, value):
+        """Format the value based on the query object"""
+        pass
+
+    def matches(self, other_table_row):
+        """
+        Checks if the match_dict dictionaries are equal for both records.
+
+        Args:
+            other_table_row: a TableRow to compare
+
+        Returns:
+            bool: whether other_table_row matches the record
+
+        """
+        return_bool = False
+
+        if self.match_dict == other_table_row.match_dict:
+            return_bool = True
+
+        return return_bool
+
+    @abstractmethod
+    def get_error_message(self, container_obj):
+        """
+        Format the error message for the row
+        Args:
+            container_obj: the flywheel container object if FlywheelRow, None for MetadataRow
+
+        Returns:
+
+        """
+        pass
+
+    def get_error_dict(self, error_dict_template, client, dry_run):
+        """
+        If no matches exist for the record, formats an error dictionary to be written to a csv. Else, returns None
+        Args:
+            error_dict_template (dict): A dictionary with keys and default values for the return_dict
+            client (flywheel.Client): an instance of the flywheel client
+            dry_run (bool): if True, do not update flywheel metadata
+
+        Returns:
+            (dict or None): a dictionary representing a row to be written to an error log csv.
+
+        """
+
+        if self.match_index:
+            return_dict = None
+            if not dry_run and isinstance(self, FlywheelRow):
+                container_obj = client.get(self.index)
+                container_obj.update_info({'transfer_log': {'valid': True}})
+
+        else:
+            return_dict = error_dict_template.copy()
+            return_dict['row_or_id'] = self.spreadsheet_index
+            return_dict.update(self.match_dict)
+            return_dict['type'] = self.container_type
+
+            if isinstance(self, FlywheelRow):
+                container_obj = client.get(self.index)
+                return_dict['error'] = self.get_error_message(container_obj)
+                return_dict['path'] = utils.get_resolver_path(client, container_obj)
+                valid = container_obj.get('info', {}).get('transfer_log', {}).get('valid')
+                return_dict['label'] = container_obj.get('label')
+                if valid:
+                    return_dict = None
+            else:
+                return_dict['error'] = self.get_error_message(None)
+
+            if not return_dict.get('error'):
+                return_dict = None
+        return return_dict
+
+
+class MetadataRow(TableRow):
+    """
+    Class for representing a row in a transfer log spreadsheet
+    """
+    @property
+    def spreadsheet_index(self):
+        """Index by which to reference the row. In this case, index+2 so the row number corresponds to the
+            human-readable index in a spreadsheet viewer (accounts for header and index start at 0)
+        """
+        return self.index + 2
+
+    def format_value(self, query, value):
+        if value is None:
+            return value
+
+        if query.pattern:
+            match = re.search(query.pattern, value)
+            if match:
+                try:
+                    value = match.group(0).strip()
+                except AttributeError:
+                    pass
+
+        if query.timeformat:
+            value = datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)
+
+        if query.field == 'subject.label' and isinstance(value, float):
+            value = str(int(value))
+
+        if isinstance(value, str):
+            if self.case_insensitive:
+                value = value.lower()
+        else:
+            value = str(value)
+
+        return value
+
+    def get_error_message(self, container_obj=None):
+        if self.match_index:
+            return None
+        message = f'row {self.spreadsheet_index} missing from flywheel'
+
+        return message
+
+
+class FlywheelRow(TableRow):
+    """
+    Class for representing a row/record retrieved from a Flywheel DataView
+    """
+
+    @property
+    def spreadsheet_index(self):
+        """Index by which to reference the row. In this case, the id of the flywheel container (the index)"""
+        container_id = self.index
+
+        return container_id
+
+    def format_value(self, query, value):
+        if value is None:
+            return value
+
+        if query.timeformat is not None:
+            try:
+                timestamp = datetime.datetime.fromisoformat(value)
+                timezone = tz.gettz(query.timezone)
+                if timezone and query.timezone:
+                    timestamp = timestamp.astimezone(timezone)
+                value = timestamp.strftime(query.timeformat)
+            except ValueError as exc:
+                raise ValueError('Cannot parse time from non-iso timestamp {}={} due to {}'.format(
+                    query.field, value, exc
+                ))
+        else:
+            value = self.config.mappings.get(str(value), str(value))
+
+        if self.case_insensitive:
+            value = value.lower()
+
+        return value
+
+    def get_error_message(self, container_obj):
+        if self.match_index:
+            return None
+        if not container_obj.get('files'):
+            message = f'{self.container_type} in flywheel contains no files'
+        else:
+            message = f'{self.container_type} in flywheel not present in transfer log'
+        return message
+
+
+class TransferLog:
+    """
+    Class representing a transfer log spreadsheet
+
+    Args:
+        client (flywheel.Client): an instance of the flywheel client
+        config (transfer_log.Config): object representing transfer_log configuration
+        transfer_log_path (str): path to the transfer log spreadsheet
+        project_id (str): id of the project container to compare against the transfer log
+        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
+
+    Attributes:
+        client (flywheel.Client): an instance of the flywheel client
+        config (transfer_log.Config): object representing transfer_log configuration
+        transfer_log_path (str): path to the transfer log spreadsheet
+        project_id (str): id of the project container to compare against the transfer log
+        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
+        flywheel_table (list): list of MetadataRow objects representing the rows in the transfer log
+        metadata_table (list): list of Flywheel records retrieved from the project per the config-specified query
+        error_list (list): list of error dicts representing to be exported to a csv
+
+    """
+    def __init__(self, client, config, transfer_log_path, project_id, case_insensitive):
+        self.client = client
+        self.config = config
+        self.transfer_log_path = transfer_log_path
+        self.project_id = project_id
+
+        self.case_insensitive = case_insensitive
+        self.flywheel_table = list()
+        self.metadata_table = list()
+        self.error_list = list()
+
+    @property
+    def error_dict(self):
+        """The default error dict/template for row errors"""
+        return get_template_error_dict(self.config)
+
+    def initialize(self):
+        """Parse the transfer log and retrieve the metadata from the Flywheel Project"""
+        self.load_metadata_table()
+        self.load_flywheel_table()
+
+    def load_metadata_table(self):
+        """Parse the transfer log, appending rows as MetadataRows to metadata_table"""
+        if not os.path.exists(self.transfer_log_path):
+            exc_str = f'{self.transfer_log_path} does not exist. Cannot load transfer log.'
+            raise TransferLogException(exc_str)
+        else:
+            tl_dict_list = load_transfer_log(self.transfer_log_path, self.config)
+            for index, row_dict in enumerate(tl_dict_list):
+                self.metadata_table.append(MetadataRow(self.config, row_dict, index, self.case_insensitive))
+        return self.metadata_table
+
+    def load_flywheel_table(self):
+        """Load records from Flywheel, appending records as FlywheelRows to flywheel_table"""
+        fw_dict_list = load_flywheel_records(self.client, self.config, self.project_id)
+        for row_dict in fw_dict_list:
+            index = row_dict['{}.id'.format(self.config.join)]
+            fw_row = FlywheelRow(self.config, row_dict, index, self.case_insensitive)
+
+            self.flywheel_table.append(fw_row)
+        return self.flywheel_table
+
+    def match_fw_to_tl(self):
+        """Match FlywheelRow records to MetadataRows"""
+        for fw_row in self.flywheel_table:
+            result = self.get_metadata(fw_row)
+            if result:
+                fw_row.match_index = result.spreadsheet_index
+                result.match_index = fw_row.spreadsheet_index
+
+    def get_metadata(self, fw_row):
+        """Find the MetadataRow matching the FlywheelRow (if any, else return None)"""
+        metadata_row = next((item for item in self.metadata_table if (not item.match_index and item.matches(fw_row))),
+                            None)
+        return metadata_row
+
+    def get_errors(self, dry_run):
+        """Compile list of errors for missing, empty and unexpected rows in the transfer log"""
+        self.error_list = list()
+        for row in self.metadata_table:
+            error = row.get_error_dict(self.error_dict, self.client, dry_run)
+            if error:
+                self.error_list.append(error)
+        for row in self.flywheel_table:
+            error = row.get_error_dict(self.error_dict, self.client, dry_run)
+            if error:
+                self.error_list.append(error)
+        return self.error_list
+
+
+def get_template_error_dict(config):
+    """
+    Formats and returns a template error dict given a transfer_log.Config object
+    Args:
+        config(transfer_log.Config):
+
+    Returns:
+        dict: template error dict with default null values
+    """
+    error_global_copy = ERROR_DICT.copy()
+    error_dict = dict()
+    error_dict['row_or_id'] = error_global_copy.pop('row_or_id')
+    for query in config.queries:
+        if query.value:
+            error_dict[query.field] = None
+    for key, value in error_global_copy.items():
+        error_dict[key] = value
+    return error_dict
 
 
 def load_config_file(file_path):
@@ -116,125 +537,6 @@ def load_config_file(file_path):
     return Config(config_doc)
 
 
-def key_from_flywheel(row, config, case_insensitive=False):
-    """Convert a flywheel row to a tuple base on what we will be querying
-
-    Args:
-        row (dict): A dict returned from the dataview
-        config (Config): The config object
-    Returns:
-        tuple: The key to lookup on
-    """
-    def format_value(query, case_insensitive=False):
-        """Parse a value to a datetime if required by the query
-
-        Args:
-            query (Query): A query from the config
-        Returns:
-            str|NoneType: The formated value
-        """
-        value = row.get(query.field)
-        if value is None:
-            return None
-        elif query.timeformat is not None:
-            try:
-                timestamp = datetime.datetime.fromisoformat(value)
-                timezone = tz.gettz(query.timezone)
-                if timezone and query.timezone:
-                    timestamp = timestamp.astimezone(timezone)
-                value = [timestamp.strftime(query.timeformat)]
-            except ValueError as e:
-                raise ValueError('Cannot parse time from non-iso timestamp {}={}'.format(
-                    query.field, value
-                ))
-        else:
-            value = config.mappings.get(str(value), [str(value)])
-
-        if not isinstance(value, list):
-            if isinstance(value, str):
-                value = [value]
-            else:
-                value = list(value)
-
-        if case_insensitive:
-            return [v.lower() for v in value]
-        else:
-            return value
-
-    return tuple([format_value(query, case_insensitive) for query in config.queries])
-
-
-def format_flywheel_key(key, config):
-    """Converts a flywheel key to a metadata key
-
-    Args:
-        key (tuple): A tuple representing the flywheel key
-        config (Config): The config object
-    Returns:
-        tuple: The key to lookup on
-    """
-    new_key = []
-    for index, key_item in enumerate(key):
-        if config.queries[index].value is False:
-            new_key.append(None)
-        else:
-            new_key.append(key_item)
-    return tuple(new_key)
-
-
-def key_from_metadata(row, config, case_insensitive=False):
-    """Convert a metadata row to a tuple base on what we will be querying
-
-    Args:
-        row (dict): A dict representing a row from the metadata file
-        config (Config): The config object
-    Returns:
-        tuple: The key to lookup on
-    """
-    def format_value(query, case_insensitive=False):
-        """Match a pattern on a value
-
-        Args:
-            query (Query): A query from the config
-        Returns:
-            str|NoneType: The formatted value
-        """
-        if query.value is False:
-            # This is a flywheel only field in order to differentiate the acquisitions
-            # that don't match a session + modality combo
-            return None
-        value = row.get(query.value)
-        if value is None:
-            return None
-        elif query.pattern:
-            match = re.search(query.pattern, value)
-            if match:
-                try:
-                    value = match.group(0).strip()
-                except AttributeError:
-                    pass
-        elif query.field == 'subject.label' and isinstance(value, float):
-            value = str(int(value))
-        else:
-            value = str(value)
-
-        if query.timeformat:
-            value = [datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)]
-
-        if not isinstance(value, list):
-            if isinstance(value, str):
-                value = [value]
-            else:
-                value = list(value)
-
-        if case_insensitive:
-            return [str(v).lower() for v in value]
-        else:
-            return value
-
-    return tuple([format_value(query, case_insensitive) for query in config.queries])
-
-
 def get_clean_dtypes(client, view, project_id, ignore_cols=None):
     """Returns curated dtypes dictionary
 
@@ -242,7 +544,7 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
     pandas data type of remaining rows
 
     Args:
-        client (object): Flywheel client
+        client (flywheel.Client): Flywheel client
         view (object): Flywheel dataview
         project_id (str): Flywheel project ID
         ignore_cols (list, optional): List of column names to ignore when droping rows with null values
@@ -283,50 +585,6 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
     return df_dtypes
 
 
-def get_hierarchy(client, config, project_id, case_insensitive=False):
-    """Load a dictionary with indexes to easily query the project
-
-    Args:
-        client (Client): The flywheel sdk client
-        config (Config): The config object
-        project_id (str): The id of th project to migrate metadata to
-        case_insensitive (bool): whether to map with case-insensitivity
-    Returns:
-        dict: a mapping of tuples to flywheel sdk containers
-    """
-    container_type = config.join
-    valid_key = '{}.info.transfer_log.valid'.format(container_type)
-    deleted_key = '{}.deleted'.format(container_type)
-    columns = [query.field for query in config.queries] + [valid_key, deleted_key]
-    get_original_timezone = False
-    if 'session.timestamp' in columns:
-        get_original_timezone = True
-        columns.append('session.timezone')
-    if container_type == 'acquisition':
-        view = client.View(columns=columns, container=container_type,
-                           filename=config.filename, process_files=False, match='all',
-                           sort=False)
-    else:
-        view = client.View(columns=columns, sort=False)
-
-    df_dtypes = get_clean_dtypes(client, view, project_id, ignore_cols=[valid_key, deleted_key])
-    flywheel_table = client.read_view_dataframe(view, project_id, opts={'dtype': df_dtypes})
-    flywheel_table = flywheel_table.astype(df_dtypes)
-    # with client.read_view_data(view, project_id) as resp:
-    #     flywheel_table = json.load(resp)
-    if get_original_timezone:
-        flywheel_table['session.timestamp'] = flywheel_table.apply(convert_timezones,
-                                                                   axis=1)
-    flywheel_table = flywheel_table.to_dict(orient='records')
-
-    metadata = dict()
-    for i, row in enumerate(flywheel_table):
-        if pd.isna(row.get(deleted_key)):
-            metadata.update(expand_keys(key_from_flywheel(row, config, case_insensitive),
-                                        client.get(row['{}.id'.format(container_type)])))
-    return metadata
-
-
 def convert_timezones(row):
     """Modifies the session.timestamp to isoformat UTC from the original timezone,
         given by session.timezone
@@ -339,155 +597,12 @@ def convert_timezones(row):
     """
     if row['session.timestamp'] is not None:
         if isinstance(row['session.timezone'], str):
-            return datetime.datetime.fromisoformat(row['session.timestamp']).astimezone(tz.gettz(row['session.timezone'])).isoformat()
+            return datetime.datetime.fromisoformat(row['session.timestamp']).astimezone(
+                tz.gettz(row['session.timezone'])).isoformat()
         else:
             return datetime.datetime.fromisoformat(row['session.timestamp']).isoformat()
     else:
         return row['session.timestamp']
-
-
-def expand_keys(lol, val):
-    """Return expanded key from metadata with assigned value
-
-    The key_from_metadata comes as a tuple with following format e.g. (['val1'], ['val2', 'val3'], None)
-    This needs to be converted to non-iterable so that it can be hashed and used as keys for matching
-
-    Args:
-        lol (tuple): Array of array
-        val (any): Any value
-
-    Returns:
-        dict: Dictionary of key/value with key expanded combination of lol
-    """
-    lists_to_massage = [x if isinstance(x, list) else [x] for x in lol]
-    return {x: val for x in list(itertools.product(*lists_to_massage))}
-
-
-def load_metadata(metadata_path, config, case_insensitive=False):
-    """Loads and formats the metadata to conform to how the flywheel metadata
-    object is
-
-    Args:
-        metadata_path (str): Path to the metadata file
-        case_insensitive (bool): whether to map with case-insensitivity
-        config (Config): The config object
-    Returns:
-        dict: a mapping of tuples to metadata rows
-    """
-    raw_metadata = []
-
-    extension = os.path.splitext(metadata_path)[1]
-    if extension == '.xlsx':
-        wb = xlrd.open_workbook(metadata_path)
-        sh = wb.sheet_by_index(0)
-        keys = None
-        for row in sh.get_rows():
-            if keys is None:
-                keys = [cell.value for cell in row]
-            else:
-                raw_metadata.append({
-                    keys[i]: row[i].value for
-                    i in range(len(keys))
-                })
-    elif extension == '.csv':
-        with open(metadata_path, 'r') as fp:
-            reader = csv.DictReader(fp)
-            for row in reader:
-                raw_metadata.append(row)
-    else:
-        raise Exception('Filetype "%s" not supported', extension)
-    if raw_metadata:
-        errors = check_config_and_log_match(config, raw_metadata)
-        if errors:
-            raise TransferLogException('Malformed Transfer Log', errors=errors)
-
-    metadata = dict()
-    for i, row in enumerate(raw_metadata):
-        metadata.update(expand_keys(key_from_metadata(row, config, case_insensitive), i + 2))
-
-    return metadata
-
-
-def validate_flywheel_against_metadata(flywheel_table, metadata, config):
-    """Ensures that a container that matches each row of the metadata exists
-    in the project and warns of any container that are not reflected in the
-    metadata
-
-    Args:
-        flywheel_table (dict): dictionary with flywheel keys
-        metadata (dict): dictionary with metadata keys
-        config (Config): The transfer log configuration
-    Returns:
-        tuple: A list of missing container keys, a list of found containers, a
-            dictionary of unexpected container keys to the corresponding container
-    """
-    unexpected_containers = {}
-    found_containers_map = {}
-
-    # for container_key in metadata.keys():
-    #     if not flywheel_table.get(container_key):
-    #         missing_containers.append(container_key)
-    #     else:
-    #         found_containers.append(flywheel_table.pop(container_key))
-
-    for flywheel_key in flywheel_table.keys():
-        formatted_key = format_flywheel_key(flywheel_key, config)
-        if not metadata.get(formatted_key):
-            if not found_containers_map.get(formatted_key):
-                # doesn't match a found row or a yet to be found row
-                unexpected_containers[flywheel_key] = flywheel_table[flywheel_key]
-            else:
-                # Already found, we can just skip over this
-                continue
-        else:
-            # Matches a row that is missing so we move the container over and
-            # pop off of the missing rows table
-            found_containers_map[formatted_key] = flywheel_table[flywheel_key]
-            metadata.pop(formatted_key)
-
-    found_containers = list(found_containers_map.values())
-
-    return metadata, found_containers, unexpected_containers
-
-
-def create_missing_error(row_number, container_type, extra_info=''):
-    return {
-        'error': 'row {} missing from flywheel{}'.format(row_number, f' ({extra_info})' if extra_info else ''),
-        'path': None,
-        'type': container_type,
-        'resolved': False,
-        'label': None,
-        '_id': None
-    }
-
-
-def create_unexpected_error(container, client):
-    return {
-        'error': '{} in flywheel not present in transfer log'.format(container.container_type),
-        'path': utils.get_resolver_path(client, container),
-        'type': container.container_type,
-        'resolved': False,
-        'label': container.label,
-        '_id': container.id
-    }
-
-
-def create_empty_error(container, client):
-    return {
-        'error': '{} in flywheel contains no files'.format(container.container_type),
-        'path': utils.get_resolver_path(client, container),
-        'type': container.container_type,
-        'resolved': False,
-        'label': container.label,
-        '_id': container.id
-    }
-
-
-def get_key(my_dict, val):
-    for key, value in my_dict.items():
-        if val == value:
-            return key
-    return "key doesn't exist"
 
 
 def check_config_and_log_match(config, raw_metadata):
@@ -501,22 +616,23 @@ def check_config_and_log_match(config, raw_metadata):
     Returns:
         list: List of malformed transfer log errors
     """
-    errors = []
+    error_list = []
     header = raw_metadata[0].keys()
     for query in config.queries:
         if query.value not in header and query.value is not False:
-            errors.append({
+            error_list.append({
                 'column': query.value,
                 'error': 'Transfer log missing column {}'.format(query.value)
             })
 
-    if not errors:
+    if not error_list:
         for index, row in enumerate(raw_metadata):
             for query in config.queries:
+                value = None
                 if query.validate:
                     match = re.search(query.validate, str(row[query.value]))
                     if not match:
-                        errors.append({
+                        error_list.append({
                             'row': index + 2,
                             'column': query.value,
                             'error': 'Value {} does not match {}'.format(row[query.value],
@@ -526,31 +642,33 @@ def check_config_and_log_match(config, raw_metadata):
                         value = match.group(0).strip()
                     except AttributeError:
                         pass
-                elif query.value != False:
+                elif query.value is not False:
                     value = str(row[query.value])
-                if query.timeformat:
+                if query.timeformat and value is not None:
                     try:
                         datetime.datetime.strptime(str(value), query.timeformat)
                     except Exception:
-                        errors.append({
+                        error_list.append({
                             'row': index + 2,
                             'column': query.value,
                             'error': 'Timeformat {} does not match {}'.format(value,
                                                                               query.timeformat)
                         })
 
-    return errors
+    return error_list
 
 
 def main(gear_context, log_level, project_path, dry_run=False):
     """Query flywheel for a set of containers base on a tabular file and a
-    yaml template on how to use the csv file
+        yaml template on how to use the csv file
 
-    Args:
-        gear_context (GearContext): the flywheel gear context object
-        log_level (str|int): A logging level (DEBUG, INFO) or int (10, 50)
-        project_path (str): The resolver path to the project
-    """
+        Args:
+            gear_context (GearContext): the flywheel gear context object
+            log_level (str|int): A logging level (DEBUG, INFO) or int (10, 50)
+            project_path (str): The resolver path to the project
+            dry_run (bool): whether to update info.transfer_log.valid on containers that are valid
+
+        """
     if isinstance(gear_context, dict):
         client = gear_context.get('client')
         config_path = gear_context.get('template')
@@ -569,55 +687,29 @@ def main(gear_context, log_level, project_path, dry_run=False):
     # set logging level
     log.setLevel(log_level)
 
-    # Load in the tabular data
-    input_metadata = load_metadata(metadata, config, case_insensitive)
-    log.debug(f'transfer_log_values:{input_metadata.keys()}')
-
     log.debug('Project path is {}'.format(project_path))
     project = client.lookup(project_path)
-
-    # Load in the flywheel hierarchy as tabular data
-    flywheel_table = get_hierarchy(client, config, project.id, case_insensitive)
-    log.debug(f'flywheel_values: {flywheel_table.keys()}')
-
-    # Check containers vs transfer log
-    missing_containers, found_containers, unexpected_containers = \
-        validate_flywheel_against_metadata(flywheel_table, input_metadata.copy(), config)
-
-    # Check for empty containers among unexpected_containers
-    empty_containers = {}
-    for k, v in unexpected_containers.items():
-        container = client.acquisitions.find_one(f'_id={k[-1]}')
-        if not container.files:
-            empty_containers[k] = unexpected_containers.pop(k)
+    transfer_log = TransferLog(client, config, metadata, project.id, case_insensitive)
+    transfer_log.initialize()
+    transfer_log.match_fw_to_tl()
 
     # Generate Report
-    errors = []
-    for row_number in missing_containers.values():
-        errors.append(create_missing_error(row_number, config.join, extra_info=get_key(input_metadata, row_number+1)))
-    for container in unexpected_containers.values():
-        if not container.info.get('tranfer_log', {}).get('valid'):
-            errors.append(create_unexpected_error(container, client))
-    for container in empty_containers.values():
-        if not container.info.get('tranfer_log', {}).get('valid'):
-            errors.append(create_empty_error(container, client))
+    tl_errors = transfer_log.get_errors(dry_run)
 
-    if not dry_run:
-        for container in found_containers:
-            container.update_info({'transfer_log': {'valid': True}})
-
-    return errors
+    return tl_errors, list(transfer_log.error_dict.keys())
 
 
-def create_output_file(errors, filename, validate_transfer_log=False):
+def create_output_file(errors, filename, validate_transfer_log=False, headers=None):
     """Outputs the errors into a csv file
 
     Args:
         errors (list): A list of transfer log errors
         filename (str): Name of the file to output to
         validate_transfer_log (bool): Use headers for malformed transfer log
+        headers (list): list of headers to use for spreadsheet
     """
-    headers = TRANSFER_LOG_ERROR_HEADERS if validate_transfer_log else CSV_HEADERS
+    if not headers:
+        headers = TRANSFER_LOG_ERROR_HEADERS if validate_transfer_log else CSV_HEADERS
     with open(filename, 'w') as output_file:
         csv_dict_writer = csv.DictWriter(output_file, fieldnames=headers)
         csv_dict_writer.writeheader()
@@ -648,22 +740,20 @@ if __name__ == '__main__':
 
     # Set logging level with verbosity
     if args.verbose:
-        log_level = 'DEBUG'
+        script_log_level = 'DEBUG'
     else:
-        log_level = 'INFO'
+        script_log_level = 'INFO'
 
+    tl_error_list = None
     try:
-        gear_context = {'client': fw, 'case_insensitive': args.case_insensitive, 'template': args.config,
-                        'transfer_log': args.metadata}
-        errors = main(gear_context, log_level, path, dry_run=args.dry_run)
-
+        gear_context_dict = {'client': fw, 'case_insensitive': args.case_insensitive, 'template': args.config,
+                             'transfer_log': args.metadata}
+        tl_error_list, header_list = main(gear_context_dict, script_log_level, path, dry_run=args.dry_run)
+        if args.output:
+            create_output_file(tl_error_list, args.output, headers=header_list)
+        else:
+            print(tl_error_list)
     except TransferLogException as e:
         create_output_file(e.errors, 'error-transfer-log.csv',
                            validate_transfer_log=True)
         raise e
-
-    if args.output:
-        create_output_file(errors, args.output)
-    else:
-        print(errors)
-
