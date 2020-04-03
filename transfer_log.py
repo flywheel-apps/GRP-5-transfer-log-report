@@ -312,7 +312,7 @@ class TableRow(object):
                 valid = container_obj.get('info', {}).get('transfer_log', {}).get('valid')
                 return_dict['label'] = container_obj.get('label')
                 if valid:
-                    return_dict = None
+                    return_dict['error'] = None
             else:
                 return_dict['error'] = self.get_error_message(None)
 
