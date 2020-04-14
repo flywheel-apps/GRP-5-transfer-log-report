@@ -19,9 +19,9 @@ def test_config_mappings():
     })
 
     assert config.mappings == {
-        'w04': ['Week 4'],
-        'wk4': ['Week 4'],
-        'Week_4': ['Week 4']
+        'w04': 'Week 4',
+        'wk4': 'Week 4',
+        'Week_4': 'Week 4'
     }
 
 
@@ -36,9 +36,9 @@ def test_config_mappings_with_duplicates():
     })
 
     assert config.mappings == {
-        'w04': ['Week 4', 'Week_4'],
-        'wk4': ['Week 4', 'Week_4'],
-        'Week_4': ['Week 4']
+        'w04': 'Week 4',
+        'wk4': 'Week 4',
+        'Week_4': 'Week 4'
     }
 
 

@@ -111,8 +111,7 @@ class Config(object):
         for value, keys in config_doc.get('mappings', {}).items():
             for key in keys:
                 if key in self.mappings:
-                    log.error('%s is mapped to multiple keys and it can only be mapped to one', key)
-                    raise RuntimeError(f'Please modify template to ensure that {key} is only listed once')
+                    self.mappings[value] = self.mappings.get(key)
                 else:
                     self.mappings[key] = value
 
@@ -351,11 +350,10 @@ class MetadataRow(TableRow):
         if query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
 
-        if isinstance(value, str):
-            if self.case_insensitive:
-                value = value.lower()
-        else:
-            value = str(value)
+        value = self.config.mappings.get(str(value), str(value))
+
+        if self.case_insensitive:
+            value = value.lower()
 
         return value
 
