@@ -1,24 +1,23 @@
 """A Flywheel sdk script to migrate metadata from an xnat csv to a
 Flywheel project that was migrated from xnat
 """
-from abc import ABCMeta, abstractmethod
 import argparse
 import csv
 import datetime
-import flywheel
-import logging
-import json
 import itertools
+import json
+import logging
 import os
-import pandas as pd
 import re
+from abc import ABCMeta, abstractmethod
+
+import flywheel
+import pandas as pd
 import xlrd
 import yaml
-
+from dateutil import tz
 
 import utils
-
-from dateutil import tz
 
 log = logging.getLogger()
 
@@ -150,7 +149,8 @@ def load_transfer_log(metadata_path, config):
     if raw_metadata:
         exc_errors = check_config_and_log_match(config, raw_metadata)
         if exc_errors:
-            raise TransferLogException('Malformed Transfer Log', errors=exc_errors)
+            raise TransferLogException(
+                'Malformed Transfer Log', errors=exc_errors)
 
     return raw_metadata
 
@@ -168,7 +168,8 @@ def load_flywheel_records(client, config, project_id):
     container_type = config.join
     valid_key = '{}.info.transfer_log.valid'.format(container_type)
     deleted_key = '{}.deleted'.format(container_type)
-    columns = [query.field for query in config.queries] + [valid_key, deleted_key]
+    columns = [query.field for query in config.queries] + \
+        [valid_key, deleted_key]
     get_original_timezone = False
     if 'session.timestamp' in columns:
         get_original_timezone = True
@@ -180,8 +181,10 @@ def load_flywheel_records(client, config, project_id):
     else:
         view = client.View(columns=columns, sort=False)
 
-    df_dtypes = get_clean_dtypes(client, view, project_id, ignore_cols=[valid_key, deleted_key])
-    flywheel_table = client.read_view_dataframe(view, project_id, opts={'dtype': df_dtypes})
+    df_dtypes = get_clean_dtypes(client, view, project_id, ignore_cols=[
+                                 valid_key, deleted_key])
+    flywheel_table = client.read_view_dataframe(
+        view, project_id, opts={'dtype': df_dtypes})
     flywheel_table = flywheel_table.astype(df_dtypes)
     # with client.read_view_data(view, project_id) as resp:
     #     flywheel_table = json.load(resp)
@@ -234,7 +237,8 @@ class TableRow(object):
         match_dict = dict()
         for query in self.config.queries:
             if query.value:
-                value = self.row_dict.get(query.field) or self.row_dict.get(query.value)
+                value = self.row_dict.get(
+                    query.field) or self.row_dict.get(query.value)
                 value = self.format_value(query, value)
                 match_dict[query.field] = value
         return match_dict
@@ -308,8 +312,10 @@ class TableRow(object):
             if isinstance(self, FlywheelRow):
                 container_obj = client.get(self.index)
                 return_dict['error'] = self.get_error_message(container_obj)
-                return_dict['path'] = utils.get_resolver_path(client, container_obj)
-                valid = container_obj.get('info', {}).get('transfer_log', {}).get('valid')
+                return_dict['path'] = utils.get_resolver_path(
+                    client, container_obj)
+                valid = container_obj.get('info', {}).get(
+                    'transfer_log', {}).get('valid')
                 return_dict['label'] = container_obj.get('label')
                 if valid:
                     return_dict['error'] = None
@@ -345,7 +351,8 @@ class MetadataRow(TableRow):
                     pass
 
         if query.timeformat:
-            value = datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)
+            value = datetime.datetime.strptime(
+                str(value), query.timeformat).strftime(query.timeformat)
 
         if query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
@@ -409,6 +416,10 @@ class FlywheelRow(TableRow):
             message = f'{self.container_type} in flywheel not present in transfer log'
         return message
 
+#  Encapsulating associated functionality in classes is always a good idea.
+#  It would be helpful to know more about its behavior in the docstring.
+#  i.e. it looks like this is the central class for identifying, managing and reporting errors.
+
 
 class TransferLog:
     """
@@ -432,6 +443,7 @@ class TransferLog:
         error_list (list): list of error dicts representing to be exported to a csv
 
     """
+
     def __init__(self, client, config, transfer_log_path, project_id, case_insensitive):
         self.client = client
         self.config = config
@@ -449,6 +461,8 @@ class TransferLog:
         return get_template_error_dict(self.config)
 
     def initialize(self):
+        # This "initialize" function could easily be integrated into the TranferLog constructor.
+        # And do that much more to reduce overall complexity
         """Parse the transfer log and retrieve the metadata from the Flywheel Project"""
         self.load_metadata_table()
         self.load_flywheel_table()
@@ -459,17 +473,21 @@ class TransferLog:
             exc_str = f'{self.transfer_log_path} does not exist. Cannot load transfer log.'
             raise TransferLogException(exc_str)
         else:
-            tl_dict_list = load_transfer_log(self.transfer_log_path, self.config)
+            tl_dict_list = load_transfer_log(
+                self.transfer_log_path, self.config)
             for index, row_dict in enumerate(tl_dict_list):
-                self.metadata_table.append(MetadataRow(self.config, row_dict, index, self.case_insensitive))
+                self.metadata_table.append(MetadataRow(
+                    self.config, row_dict, index, self.case_insensitive))
         return self.metadata_table
 
     def load_flywheel_table(self):
         """Load records from Flywheel, appending records as FlywheelRows to flywheel_table"""
-        fw_dict_list = load_flywheel_records(self.client, self.config, self.project_id)
+        fw_dict_list = load_flywheel_records(
+            self.client, self.config, self.project_id)
         for row_dict in fw_dict_list:
             index = row_dict['{}.id'.format(self.config.join)]
-            fw_row = FlywheelRow(self.config, row_dict, index, self.case_insensitive)
+            fw_row = FlywheelRow(self.config, row_dict,
+                                 index, self.case_insensitive)
 
             self.flywheel_table.append(fw_row)
         return self.flywheel_table
@@ -556,7 +574,8 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
         ignore_cols = []
     df_dtypes = {}
 
-    resp = client.read_view_data(view, project_id, decode=False, format='json-flat')
+    resp = client.read_view_data(
+        view, project_id, decode=False, format='json-flat')
     if resp:
         try:
             # data = resp.data
@@ -572,7 +591,8 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
             df_dtypes.update(pd.DataFrame(data_l).dtypes.to_dict())
             resp.close()
         except Exception as exc:
-            log.warning('An exception raises when trying to clean dtypes\n %s', exc)
+            log.warning(
+                'An exception raises when trying to clean dtypes\n %s', exc)
             resp.close()
 
     # replace type with pandas NaN compatible ones
@@ -645,7 +665,8 @@ def check_config_and_log_match(config, raw_metadata):
                     value = str(row[query.value])
                 if query.timeformat and value is not None:
                     try:
-                        datetime.datetime.strptime(str(value), query.timeformat)
+                        datetime.datetime.strptime(
+                            str(value), query.timeformat)
                     except Exception:
                         error_list.append({
                             'row': index + 2,
@@ -688,7 +709,9 @@ def main(gear_context, log_level, project_path, dry_run=False):
 
     log.debug('Project path is {}'.format(project_path))
     project = client.lookup(project_path)
-    transfer_log = TransferLog(client, config, metadata, project.id, case_insensitive)
+    transfer_log = TransferLog(
+        client, config, metadata, project.id, case_insensitive)
+    # This "initialize" function could easily be integrated into the TranferLog constructor.
     transfer_log.initialize()
     transfer_log.match_fw_to_tl()
 
@@ -725,7 +748,8 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--api-key', help='Use if not logged in via cli')
     parser.add_argument('--output', '-o', help='Output file csv')
-    parser.add_argument('--dry-run', action='store_true', help='Will not update validity of transfer log')
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Will not update validity of transfer log')
 
     args = parser.parse_args()
     # Path may be fw://<group_id>/<project_label>
@@ -747,7 +771,8 @@ if __name__ == '__main__':
     try:
         gear_context_dict = {'client': fw, 'case_insensitive': args.case_insensitive, 'template': args.config,
                              'transfer_log': args.metadata}
-        tl_error_list, header_list = main(gear_context_dict, script_log_level, path, dry_run=args.dry_run)
+        tl_error_list, header_list = main(
+            gear_context_dict, script_log_level, path, dry_run=args.dry_run)
         if args.output:
             create_output_file(tl_error_list, args.output, headers=header_list)
         else:

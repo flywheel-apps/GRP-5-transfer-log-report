@@ -1,5 +1,5 @@
 def get_resolver_path(client, container):
-    """Generates the resolveer path for a container
+    """Generates the resolver path for a container
 
     Args:
         client (Client): Flywheel Api client
@@ -34,5 +34,3 @@ def set_resolver_paths(error_containers, client):
     for error_container in error_containers:
         container = client.get(error_container['_id'])
         error_container['path'] = get_resolver_path(client, container)
-
-
