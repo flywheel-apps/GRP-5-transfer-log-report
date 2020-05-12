@@ -1,3 +1,4 @@
+backoff~=1.10.0
 flywheel-sdk~=11.0.1
 PyYAML~=5.3
 pandas~=1.0.1

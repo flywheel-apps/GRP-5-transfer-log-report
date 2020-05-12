@@ -5,20 +5,20 @@ from abc import ABCMeta, abstractmethod
 import argparse
 import csv
 import datetime
-import flywheel
 import logging
-import json
-import itertools
 import os
-import pandas as pd
 import re
+
+import backoff
+from dateutil import tz
+import flywheel
+import pandas as pd
 import xlrd
 import yaml
 
-
 import utils
 
-from dateutil import tz
+
 
 log = logging.getLogger()
 
@@ -206,7 +206,8 @@ class TableRow(object):
         config (transfer_log.Config): object representing transfer_log configuration
         row_dict (dict): a dictionary representing the record
         index: index at which the record was found (container for FlywheelRow, int for MetadataRow
-        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
+        case_insensitive (bool): if True, string values will be dropped to lower-case for
+            comparison
         match_index: index for the matching record from flywheel/transfer log
 
     """
@@ -222,7 +223,9 @@ class TableRow(object):
     @property
     @abstractmethod
     def spreadsheet_index(self):
-        """Index by which to reference the row (container.id for flywheel, index+2 for transfer log)"""
+        """
+        Index by which to reference the row (container.id for flywheel, index+2 for transfer log)
+        """
         pass
 
     @property
@@ -282,9 +285,11 @@ class TableRow(object):
 
     def get_error_dict(self, error_dict_template, client, dry_run):
         """
-        If no matches exist for the record, formats an error dictionary to be written to a csv. Else, returns None
+        If no matches exist for the record, formats an error dictionary to be written to a csv.
+            Else, returns None
         Args:
-            error_dict_template (dict): A dictionary with keys and default values for the return_dict
+            error_dict_template (dict): A dictionary with keys and default values for the
+                return_dict
             client (flywheel.Client): an instance of the flywheel client
             dry_run (bool): if True, do not update flywheel metadata
 
@@ -295,9 +300,6 @@ class TableRow(object):
 
         if self.match_index:
             return_dict = None
-            if not dry_run and isinstance(self, FlywheelRow):
-                container_obj = client.get(self.index)
-                container_obj.update_info({'transfer_log': {'valid': True}})
 
         else:
             return_dict = error_dict_template.copy()
@@ -309,10 +311,7 @@ class TableRow(object):
                 container_obj = client.get(self.index)
                 return_dict['error'] = self.get_error_message(container_obj)
                 return_dict['path'] = utils.get_resolver_path(client, container_obj)
-                valid = container_obj.get('info', {}).get('transfer_log', {}).get('valid')
                 return_dict['label'] = container_obj.get('label')
-                if valid:
-                    return_dict['error'] = None
             else:
                 return_dict['error'] = self.get_error_message(None)
 
@@ -327,8 +326,10 @@ class MetadataRow(TableRow):
     """
     @property
     def spreadsheet_index(self):
-        """Index by which to reference the row. In this case, index+2 so the row number corresponds to the
-            human-readable index in a spreadsheet viewer (accounts for header and index start at 0)
+        """
+        Index by which to reference the row. In this case, index+2 so the row number corresponds
+            to the human-readable index in a spreadsheet viewer (accounts for header and
+            index start at 0)
         """
         return self.index + 2
 
@@ -345,7 +346,9 @@ class MetadataRow(TableRow):
                     pass
 
         if query.timeformat:
-            value = datetime.datetime.strptime(str(value), query.timeformat).strftime(query.timeformat)
+            value = datetime.datetime.strptime(str(value), query.timeformat).strftime(
+                query.timeformat
+            )
 
         if query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
@@ -372,7 +375,10 @@ class FlywheelRow(TableRow):
 
     @property
     def spreadsheet_index(self):
-        """Index by which to reference the row. In this case, the id of the flywheel container (the index)"""
+        """
+        Index by which to reference the row. In this case, the id of the flywheel container
+            (the index)
+        """
         container_id = self.index
 
         return container_id
@@ -419,29 +425,36 @@ class TransferLog:
         config (transfer_log.Config): object representing transfer_log configuration
         transfer_log_path (str): path to the transfer log spreadsheet
         project_id (str): id of the project container to compare against the transfer log
-        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
+        case_insensitive (bool): if True, string values will be dropped to lower-case for
+            comparison
 
     Attributes:
         client (flywheel.Client): an instance of the flywheel client
         config (transfer_log.Config): object representing transfer_log configuration
         transfer_log_path (str): path to the transfer log spreadsheet
         project_id (str): id of the project container to compare against the transfer log
-        case_insensitive (bool): if True, string values will be dropped to lower-case for comparison
-        flywheel_table (list): list of MetadataRow objects representing the rows in the transfer log
-        metadata_table (list): list of Flywheel records retrieved from the project per the config-specified query
+        case_insensitive (bool): if True, string values will be dropped to lower-case for
+            comparison
+        flywheel_table (list): list of MetadataRow objects representing the rows in the
+            transfer log
+        metadata_table (list): list of Flywheel records retrieved from the project per the
+            config-specified query
         error_list (list): list of error dicts representing to be exported to a csv
 
     """
-    def __init__(self, client, config, transfer_log_path, project_id, case_insensitive):
+    def __init__(self, client, config, transfer_log_path, project_id, case_insensitive,
+                 match_containers_once):
         self.client = client
         self.config = config
         self.transfer_log_path = transfer_log_path
         self.project_id = project_id
 
         self.case_insensitive = case_insensitive
+        self.match_containers_once = match_containers_once
         self.flywheel_table = list()
         self.metadata_table = list()
         self.error_list = list()
+        self.matched_containers = list()
 
     @property
     def error_dict(self):
@@ -461,7 +474,9 @@ class TransferLog:
         else:
             tl_dict_list = load_transfer_log(self.transfer_log_path, self.config)
             for index, row_dict in enumerate(tl_dict_list):
-                self.metadata_table.append(MetadataRow(self.config, row_dict, index, self.case_insensitive))
+                self.metadata_table.append(
+                    MetadataRow(self.config, row_dict, index, self.case_insensitive)
+                )
         return self.metadata_table
 
     def load_flywheel_table(self):
@@ -484,8 +499,20 @@ class TransferLog:
 
     def get_metadata(self, fw_row):
         """Find the MetadataRow matching the FlywheelRow (if any, else return None)"""
-        metadata_row = next((item for item in self.metadata_table if (not item.match_index and item.matches(fw_row))),
-                            None)
+        log.critical(f'matching {fw_row.index}')
+        if fw_row.index in self.matched_containers:
+            metadata_row = next(
+                (item for item in self.metadata_table if item.match_index == fw_row.index),
+                None
+            )
+        else:
+            metadata_row = next(
+                (item for item in self.metadata_table if (
+                        not item.match_index and item.matches(fw_row))
+                 ), None
+            )
+            if self.match_containers_once and metadata_row is not None:
+                self.matched_containers.append(fw_row.index)
         return metadata_row
 
     def get_errors(self, dry_run):
@@ -546,7 +573,8 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
         client (flywheel.Client): Flywheel client
         view (object): Flywheel dataview
         project_id (str): Flywheel project ID
-        ignore_cols (list, optional): List of column names to ignore when droping rows with null values
+        ignore_cols (list, optional): List of column names to ignore when droping rows with null
+            values
 
     Returns:
         dict: Dictionary of of data types {column_name: dtype}
@@ -555,7 +583,6 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
     if ignore_cols is None:
         ignore_cols = []
     df_dtypes = {}
-
     resp = client.read_view_data(view, project_id, decode=False, format='json-flat')
     if resp:
         try:
@@ -564,6 +591,7 @@ def get_clean_dtypes(client, view, project_id, ignore_cols=None):
                           .replace('null', 'None')
                           .replace('true', 'True')
                           .replace('false', 'False'))
+            resp.close()
             df = pd.DataFrame(data_l)
             df.drop(ignore_cols, axis=1, inplace=True)
             indexes = list(df[df.isna().any(axis=1)].index)
@@ -673,12 +701,14 @@ def main(gear_context, log_level, project_path, dry_run=False):
         config_path = gear_context.get('template')
         metadata = gear_context.get('transfer_log')
         case_insensitive = gear_context.get('case_insensitive')
+        match_containers_once = gear_context.get('match_containers_once')
     else:
         # Extract values from gear_context
         client = gear_context.client
         config_path = gear_context.get_input_path('template')
         metadata = gear_context.get_input_path('transfer_log')
         case_insensitive = gear_context.config.get('case_insensitive')
+        match_containers_once = gear_context.config.get('match_containers_once')
 
     # Load in the config yaml input
     config = load_config_file(config_path)
@@ -688,7 +718,8 @@ def main(gear_context, log_level, project_path, dry_run=False):
 
     log.debug('Project path is {}'.format(project_path))
     project = client.lookup(project_path)
-    transfer_log = TransferLog(client, config, metadata, project.id, case_insensitive)
+    transfer_log = TransferLog(client, config, metadata, project.id, case_insensitive,
+                               match_containers_once)
     transfer_log.initialize()
     transfer_log.match_fw_to_tl()
 
@@ -725,8 +756,10 @@ if __name__ == '__main__':
     parser.add_argument('--verbose', '-v', action='store_true')
     parser.add_argument('--api-key', help='Use if not logged in via cli')
     parser.add_argument('--output', '-o', help='Output file csv')
-    parser.add_argument('--dry-run', action='store_true', help='Will not update validity of transfer log')
-
+    parser.add_argument('--dry-run', action='store_true',
+                        help='Will not update validity of transfer log')
+    parser.add_argument('--match-once', action='store_true',
+                        help='Do not log errors for multiple container files matching fw row')
     args = parser.parse_args()
     # Path may be fw://<group_id>/<project_label>
     path = args.path.split('//')[-1]
@@ -745,9 +778,15 @@ if __name__ == '__main__':
 
     tl_error_list = None
     try:
-        gear_context_dict = {'client': fw, 'case_insensitive': args.case_insensitive, 'template': args.config,
-                             'transfer_log': args.metadata}
-        tl_error_list, header_list = main(gear_context_dict, script_log_level, path, dry_run=args.dry_run)
+        gear_context_dict = {'client': fw,
+                             'case_insensitive': args.case_insensitive,
+                             'template': args.config,
+                             'transfer_log': args.metadata,
+                             'match_containers_once': args.match_once}
+        tl_error_list, header_list = main(gear_context_dict,
+                                          script_log_level,
+                                          path,
+                                          dry_run=args.dry_run)
         if args.output:
             create_output_file(tl_error_list, args.output, headers=header_list)
         else:

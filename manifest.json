@@ -50,6 +50,11 @@
       "description": "Whether to make post-regex comparisons case-insensitive.",
       "type": "boolean"
     },
+    "match_containers_once": {
+      "default": false,
+      "description": "If true, 'acquisition in flywheel not present in transfer log' errors will not be logged when multiple files from the same container match a transfer log row. (default=false)",
+      "type": "boolean"
+    },
     "filename": {
       "default": "",
       "description": "Name for output report (optional, defaults to 'transfer-log-report').",

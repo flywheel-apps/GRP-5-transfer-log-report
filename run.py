@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+im
 import csv
 import datetime
 import flywheel
@@ -128,8 +128,10 @@ def main():
         error_count = len(transfer_error_list)
 
         log.info('Writing error report')
-        filename = create_output_file(transfer_error_list, file_type=gear_context.config.get('file_type'),
-                                      gear_context=gear_context, output_filename=gear_context.config.get('filename'),
+        filename = create_output_file(transfer_error_list,
+                                      file_type=gear_context.config.get('file_type'),
+                                      gear_context=gear_context,
+                                      output_filename=gear_context.config.get('filename'),
                                       headers=header_list)
         log.info('Wrote error report with filename {}'.format(filename))
 
@@ -139,11 +141,6 @@ def main():
         log.info('Updating label of analysis={} to {}'.format(analysis.id, analysis_label))
 
         analysis.update({'label': analysis_label})
-        # # TODO: Remove this when the sdk lets me do this
-        # update_analysis_label(parent.container_type, parent.id, analysis.id,
-        #                       analysis_label,
-        #                       gear_context.client._fw.api_client.configuration.api_key['Authorization'],
-        #                       gear_context.client._fw.api_client.configuration.host)
 
 
 if __name__ == '__main__':
