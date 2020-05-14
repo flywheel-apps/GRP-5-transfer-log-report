@@ -111,9 +111,9 @@ class Config(object):
         for value, keys in config_doc.get('mappings', {}).items():
             for key in keys:
                 if key in self.mappings:
-                    self.mappings[key].append(value)
+                    self.mappings[value] = self.mappings.get(key)
                 else:
-                    self.mappings[key] = [value]
+                    self.mappings[key] = value
 
 
 def load_transfer_log(metadata_path, config):
@@ -350,11 +350,10 @@ class MetadataRow(TableRow):
         if query.field == 'subject.label' and isinstance(value, float):
             value = str(int(value))
 
-        if isinstance(value, str):
-            if self.case_insensitive:
-                value = value.lower()
-        else:
-            value = str(value)
+        value = self.config.mappings.get(str(value), str(value))
+
+        if self.case_insensitive:
+            value = value.lower()
 
         return value
 
