@@ -22,9 +22,7 @@ import yaml
 
 import utils
 
-
 log = logging.getLogger()
-
 
 CSV_HEADERS = [
     'row_or_id',
@@ -256,78 +254,12 @@ class TableRow(object):
         """Format the value based on the query object"""
         pass
 
-    def matches(self, other_table_row):
-        """
-        Checks if the match_dict dictionaries are equal for both records.
-
-        Args:
-            other_table_row: a TableRow to compare
-
-        Returns:
-            bool: whether other_table_row matches the record
-
-        """
-        return_bool = False
-
-        if self.match_dict == other_table_row.match_dict:
-            return_bool = True
-
-        return return_bool
-
-    @abstractmethod
-    def get_error_message(self, container_obj):
-        """
-        Format the error message for the row
-        Args:
-            container_obj: the flywheel container object if FlywheelRow, None for MetadataRow
-
-        Returns:
-
-        """
-        pass
-
-    def get_error_dict(self, error_dict_template, client, dry_run):
-        """
-        If no matches exist for the record, formats an error dictionary to be written to a csv.
-            Else, returns None
-        Args:
-            error_dict_template (dict): A dictionary with keys and default values for the
-                return_dict
-            client (flywheel.Client): an instance of the flywheel client
-            dry_run (bool): if True, do not update flywheel metadata
-
-        Returns:
-            (dict or None): a dictionary representing a row to be written to an error log csv.
-
-        """
-
-        if self.match_index:
-            return_dict = None
-
-        else:
-            log.debug('Getting error message for %s', self.index)
-            return_dict = error_dict_template.copy()
-            return_dict['row_or_id'] = self.spreadsheet_index
-            return_dict.update(self.match_dict)
-            return_dict['type'] = self.container_type
-
-            if isinstance(self, FlywheelRow):
-                container_obj = client.get(self.index)
-                return_dict['error'] = self.get_error_message(container_obj)
-                return_dict['path'] = utils.get_resolver_path(client, container_obj)
-                return_dict['label'] = container_obj.get('label')
-            else:
-                return_dict['error'] = self.get_error_message(None)
-
-            if not return_dict.get('error'):
-                return_dict = None
-        return return_dict
-
 
 class MetadataRow(TableRow):
     """
     Class for representing a row in a transfer log spreadsheet
     """
+
     @property
     def spreadsheet_index(self):
         """
@@ -363,13 +295,6 @@ class MetadataRow(TableRow):
             value = value.lower()
 
         return value
-
-    def get_error_message(self, container_obj=None):
-        if self.match_index:
-            return None
-        message = f'row {self.spreadsheet_index} missing from flywheel'
-
-        return message
 
 
 class FlywheelRow(TableRow):
@@ -410,15 +335,6 @@ class FlywheelRow(TableRow):
 
         return value
 
-    def get_error_message(self, container_obj):
-        if self.match_index:
-            return None
-        if not container_obj.get('files'):
-            message = f'{self.container_type} in flywheel contains no files'
-        else:
-            message = f'{self.container_type} in flywheel not present in transfer log'
-        return message
-
 
 class TransferLog:
     """
@@ -431,6 +347,8 @@ class TransferLog:
         project_id (str): id of the project container to compare against the transfer log
         case_insensitive (bool): if True, string values will be dropped to lower-case for
             comparison
+        match_containers_once (bool): if True, excludes errors for Flywheel ids
+            that match transfer_log rows
 
     Attributes:
         client (flywheel.Client): an instance of the flywheel client
@@ -443,11 +361,25 @@ class TransferLog:
             transfer log
         metadata_table (list): list of Flywheel records retrieved from the project per the
             config-specified query
-        error_list (list): list of error dicts representing to be exported to a csv
+        matched_containers (list): list of Flywheel container ids that match
+            transfer log rows
+        empty_containers (list): list of Flywheel container ids of container
+            type self.config.join that are missing files
+        match_cols (list): list of fields/columns matched between flywheel and
+            the transfer log
+        resolver_path_dict (dict): dictionary mapping Flywheel ids to resolver
+            paths
+        flywheel_df (pandas.DataFrame): dataframe containing flywheel records
+            loaded from the dataview
+        metadata_df (pandas.DataFrame): dataframe containing metadata records
+            loaded from the transfer log
+        match_df (pandas.DataFrame): dataframe resulting from merging flywheel
+            and metadata record count dataframes
 
     """
-    def __init__(self, client, config, transfer_log_path, project_id, case_insensitive=False,
-                 match_containers_once=False):
+
+    def __init__(self, client, config, transfer_log_path, project_id,
+                 case_insensitive=False, match_containers_once=False):
         self.client = client
         self.config = config
         self.transfer_log_path = transfer_log_path
@@ -457,7 +389,6 @@ class TransferLog:
         self.match_containers_once = match_containers_once
         self.flywheel_table = list()
         self.metadata_table = list()
-        self.error_list = list()
         self.matched_containers = list()
         self.empty_containers = list()
         self.match_cols = [
@@ -515,46 +446,8 @@ class TransferLog:
         self.flywheel_df = self.get_table_df(self.flywheel_table)
         return self.flywheel_table
 
-    def match_fw_to_tl(self):
-        """Match FlywheelRow records to MetadataRows"""
-        for fw_row in self.flywheel_table:
-            result = self.get_metadata(fw_row)
-            if result:
-                fw_row.match_index = result.spreadsheet_index
-                result.match_index = fw_row.spreadsheet_index
-
-    def get_metadata(self, fw_row):
-        """Find the MetadataRow matching the FlywheelRow (if any, else return None)"""
-        log.debug(f'matching {fw_row.index}')
-        if fw_row.index in self.matched_containers:
-            metadata_row = next(
-                (item for item in self.metadata_table if item.match_index == fw_row.index),
-                None
-            )
-        else:
-            metadata_row = next(
-                (item for item in self.metadata_table if (
-                        not item.match_index and item.matches(fw_row))
-                 ), None
-            )
-            if self.match_containers_once and metadata_row is not None:
-                self.matched_containers.append(fw_row.index)
-        return metadata_row
-
-    def get_errors(self, dry_run):
-        """Compile list of errors for missing, empty and unexpected rows in the transfer log"""
-        self.error_list = list()
-        for row in self.metadata_table:
-            error = row.get_error_dict(self.error_dict, self.client, dry_run)
-            if error:
-                self.error_list.append(error)
-        for row in self.flywheel_table:
-            error = row.get_error_dict(self.error_dict, self.client, dry_run)
-            if error:
-                self.error_list.append(error)
-        return self.error_list
-
-    def get_table_df(self, table):
+    @staticmethod
+    def get_table_df(table):
         """
         Assemble a DataFrame from TableRow match_dict values
         Args:
@@ -579,6 +472,16 @@ class TransferLog:
 
     @staticmethod
     def get_rel_path(row_dict):
+        """
+        Gets the relative resolver path from a row_dict (dataview result)
+        Args:
+            row_dict (dict): dictionary representing a dataview row returned by
+                Flywheel
+
+        Returns:
+            str: the relative path for the container (does not include group or
+                project)
+        """
         label_list = [
             row_dict.get('subject.label'),
             row_dict.get('session.label'),
@@ -589,6 +492,13 @@ class TransferLog:
         return rel_path
 
     def get_path_dict(self):
+        """
+        Creates a dictionary with container id: resolver path key: value pairs
+
+        Returns:
+            dict: a dictionary with container id: resolver path key: value
+                pairs
+        """
         project = self.client.get_project(self.project_id)
         project_path = '/'.join([project.group, project.label])
         path_dict = dict()
@@ -613,6 +523,17 @@ class TransferLog:
 
     @staticmethod
     def get_empty_container_ids(fw_client, project_id, container_type):
+        """
+        Retrieves a list of empty containers of container_type in the Flywheel
+            project with id project_id
+        Args:
+            fw_client (flywheel.Client): an instance of the flywheel client
+            project_id (str): id belonging to a Flywheel project
+            container_type (str): 'session', 'subject', or 'acquisition'
+
+        Returns:
+            list: list of container ids that do not have files
+        """
         container_list = list()
         query = f'parents.project={project_id},files.size=null'
         if container_type == 'acquisition':
@@ -639,6 +560,13 @@ class TransferLog:
         return id_list
 
     def get_match_row_error(self, row):
+        """
+        Creates an error message for a row in self.match_df
+        Args:
+            row (pandas.Series): a row from self.match_df
+        Returns:
+            str: the error message
+        """
         error_msg = None
         container_type = self.config.join
         empty_id_list = self.empty_containers
@@ -682,14 +610,13 @@ class TransferLog:
             error_msg = 'merge value not recognized: {}'.format(row['_merge'])
         return error_msg
 
-    @staticmethod
-    def get_paths(id_list, path_dict):
-        paths = None
-        if isinstance(id_list, list):
-            paths = [path_dict.get(cid) for cid in id_list]
-        return paths
-
     def get_error_df(self):
+        """
+        Creates a dataframe describing errors/inconsistencies between the
+            Transfer Log and the Flywheel project
+        Returns:
+            pandas.DataFrame
+        """
         # Copy so we don't transform match_df
         error_df = self.match_df.copy()
         # Get the error messages
@@ -734,15 +661,27 @@ class TransferLog:
         return error_df
 
     @staticmethod
-    def count_df_errors(error_df):
+    def count_df_errors(df):
+        """
+        Counts the number of unique flywheel container IDs and Transfer Log
+            row indices, given an error_df generated by get_error_df
+
+        Args:
+            df (pandas.DataFrame): a dataframe generated by
+                the get_error_df method
+
+        Returns:
+            int: the count of unique flywheel container IDs and Transfer Log
+                row indices
+        """
         tl_index_list = list()
-        for val in error_df['transfer_log_rows'].values:
+        for val in df['transfer_log_rows'].values:
             if isinstance(val, list):
                 tl_index_list.extend(val)
 
         tl_index_list = list(set(tl_index_list))
         fw_index_list = [
-            fw_id for fw_id in error_df['flywheel_id'].unique()
+            fw_id for fw_id in df['flywheel_id'].unique()
             if isinstance(fw_id, str)
         ]
         err_count = len(fw_index_list) + len(tl_index_list)
@@ -1150,14 +1089,14 @@ if __name__ == '__main__':
                              'template': args.config,
                              'transfer_log': args.metadata,
                              'match_containers_once': args.match_once}
-        error_df, error_count = main(gear_context_dict,
-                                     script_log_level,
-                                     path,
-                                     dry_run=args.dry_run)
+        tl_error_df, tl_error_count = main(gear_context_dict,
+                                           script_log_level,
+                                           path,
+                                           dry_run=args.dry_run)
         if args.output:
-            error_df.to_csv(args.output, index=False)
+            tl_error_df.to_csv(args.output, index=False)
         else:
-            print(error_df)
+            print(tl_error_df)
     except TransferLogException as e:
         create_output_file(e.errors, 'error-transfer-log.csv',
                            validate_transfer_log=True)
