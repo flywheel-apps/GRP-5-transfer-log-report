@@ -413,7 +413,8 @@ class TransferLog:
         log.info('Matching Flywheel and transfer log records...')
         self.match_df_records()
         log.info('Loading project resolver paths from Flywheel...')
-        self.resolver_path_dict = self.get_path_dict()
+        project = self.client.get_project(self.project_id)
+        self.resolver_path_dict = self.get_path_dict(project)
         log.info('Identifying empty containers...')
         self.empty_containers = self.get_empty_container_ids(
             self.client,
@@ -438,6 +439,11 @@ class TransferLog:
     def load_flywheel_table(self):
         """Load records from Flywheel, appending records as FlywheelRows to flywheel_table"""
         fw_dict_list = get_flywheel_records(self.client, self.config, self.project_id)
+        self.create_flywheel_table(fw_dict_list)
+        return self.flywheel_table
+
+    def create_flywheel_table(self, fw_dict_list):
+        """Load the dict_list as FlywheelRows"""
         for row_dict in fw_dict_list:
             index = row_dict['{}.id'.format(self.config.join)]
             fw_row = FlywheelRow(self.config, row_dict, index, self.case_insensitive)
@@ -491,15 +497,17 @@ class TransferLog:
         rel_path = '/'.join(label_list)
         return rel_path
 
-    def get_path_dict(self):
+    def get_path_dict(self, project):
         """
         Creates a dictionary with container id: resolver path key: value pairs
+
+        Args:
+            project (flywheel.Project): the Flywheel project
 
         Returns:
             dict: a dictionary with container id: resolver path key: value
                 pairs
         """
-        project = self.client.get_project(self.project_id)
         project_path = '/'.join([project.group, project.label])
         path_dict = dict()
         for row in self.flywheel_table:
@@ -508,6 +516,7 @@ class TransferLog:
             id_str = f'{self.config.join}.id'
             container_id = row.row_dict.get(id_str)
             path_dict[container_id] = res_path
+        self.resolver_path_dict = path_dict
         return path_dict
 
     def get_record_df(self, df):
@@ -589,7 +598,7 @@ class TransferLog:
             )
         # Records that match at least once between flywheel and transfer_log
         elif row['_merge'] == 'both':
-            diff = row['records_flywheel'] - row['records_metadata']
+            diff = int(row['records_flywheel'] - row['records_metadata'])
             # More records in flywheel
             if diff > 0:
 
@@ -635,9 +644,11 @@ class TransferLog:
 
         # If match_containers_once, drop fw rows that already have tl matches
         if self.match_containers_once:
-            error_df[(~error_df['tl_index_flywheel'].isin(
-                self.matched_containers
-            )) & (error_df['_merge'] != 'both')].reset_index(drop=True)
+            error_df = error_df[
+                ~((error_df['tl_index_flywheel'].isin(
+                    self.matched_containers
+                )) & (error_df['_merge'] != 'both'))
+            ].reset_index(drop=True)
 
         # Get the resolver paths for flywheel IDs
         error_df['path'] = error_df['tl_index_flywheel'].map(

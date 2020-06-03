@@ -1,0 +1,11 @@
+﻿acquisition.id,acquisition.label,session.label,subject.label,file.modality,session.timestamp,session.timezone
+0c4399d2a5b211eab936acde,T1w,screening,10651,MR,2005-05-23T12:00:00,
+1cd82876a5b211eab936acde,T1w,Week 0,10651,MR,2005-06-23T12:00:00,
+275bbb82a5b211eab936acde,T1w,Week 12,10651,MR,2005-08-17T12:00:00,
+2ef1ff0aa5b211eab936acde,T1w,Week 16,10651,MR,2005-09-19T12:00:00,
+b6434b4f9914b36cc0bb6c27,T1w,Screening,10553,MR,2005-05-16T12:00:00,
+3a434dd5a8f0c33c18ddc7c2,T1w,Week 4,10553,MR,2005-07-07T12:00:00,
+869a4628bf33d1b3de842c2f,T1w,Week 12,10553,MR,2005-08-27T12:00:00,
+c3fc408b8a748e071563661c,T1w,Week 16,10553,MR,2005-09-20T12:00:00,
+s3fc408b8a748e071563661c,T1w,Week 16,10553,MR,2005-09-20T12:00:00,
+3a434dd5a8f0c33c18ddc7c2,T1w,Week 4,10553,MR,2005-07-09T12:00:00,
