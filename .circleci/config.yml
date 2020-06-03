@@ -119,11 +119,6 @@ jobs:
             docker run -it --volumes-from source-vol --name test ${DOCKER_IMAGE_NAME} \
               bash -c "pip install --user --no-warn-script-location -r tests/requirements.txt && PATH=/home/flywheel/.local/bin:$PATH && tests/bin/tests.sh"
             docker cp test:/flywheel/v0/htmlcov .
-            docker cp test:/flywheel/v0/test-reports .
-      - store_test_results:
-          path: test-reports
-      - store_artifacts:
-          path: test-reports
       - store_artifacts:
           path: htmlcov
           prefix: coverage
