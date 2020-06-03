@@ -17,11 +17,6 @@ def test_transfer_log_class():
                            'label': None}
     assert expected_error_dict == test_transfer_log.error_dict
 
-    test_transfer_log.load_metadata_table()
-    test_transfer_log.match_fw_to_tl()
-    error_list = test_transfer_log.get_errors(dry_run=True)
-    assert len(error_list) == len(test_transfer_log.metadata_table)
-
 
 def test_metadata_row():
     config = transfer_log.Config(
@@ -37,19 +32,6 @@ def test_metadata_row():
     expected_match_dict = {'subject.info.ClinicalTrialSiteID': '266099', 'subject.label': '1129',
                            'session.label': 'screening', 'session.timestamp': '08/01/2014'}
     assert test_meta_row.match_dict == expected_match_dict
-    template_dict = transfer_log.get_template_error_dict(config)
-    expected_error_dict = template_dict.copy()
-    expected_error_dict['row_or_id'] = 4
-    expected_error_dict['label'] = None
-    expected_error_dict['type'] = 'session'
-    for key in expected_error_dict.keys():
-        if test_meta_row.match_dict.get(key):
-            expected_error_dict[key] = test_meta_row.match_dict[key]
-    expected_error_message = 'row 4 missing from flywheel'
-    expected_error_dict['error'] = expected_error_message
-    assert test_meta_row.get_error_message() == expected_error_message
-    assert test_meta_row.get_error_dict(template_dict, client=None, dry_run=True) == expected_error_dict
-    assert test_meta_row.spreadsheet_index == 4
 
 
 def test_flywheel_row():
@@ -71,18 +53,3 @@ def test_flywheel_row():
     test_fw_dict['session.timestamp'] = '08/01/2014'
     assert test_fw_row.spreadsheet_index == 'test_id'
     assert test_fw_row.match_dict == test_fw_dict
-    template_dict = transfer_log.get_template_error_dict(config)
-    expected_error_dict = template_dict.copy()
-    expected_error_dict['row_or_id'] = 'test_id'
-    expected_error_dict['label'] = 'test_label'
-    expected_error_dict['type'] = 'session'
-    for key in expected_error_dict.keys():
-        if test_fw_row.match_dict.get(key):
-            expected_error_dict[key] = test_fw_row.match_dict[key]
-    expected_error_message = 'session in flywheel contains no files'
-
-    assert test_fw_row.get_error_message({'label': 'test_label', 'id': 'test_id'}) == expected_error_message
-
-    assert test_fw_row.get_error_message(
-        {'label': 'test_label', 'id': 'test_id', 'files': [{'name': 'test_file'}]}
-    ) == 'session in flywheel not present in transfer log'
