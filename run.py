@@ -113,8 +113,9 @@ def main():
         gear_context.init_logging()
         log.info(gear_context.config)
         log.info(gear_context.destination)
+        analysis_id = gear_context.destination.get('id')
         analysis = gear_context.client.get_analysis(
-            gear_context.destination['id']
+           analysis_id
         )
         parent = gear_context.client.get_container(analysis.parent['id'])
         parent_path = utils.get_resolver_path(gear_context.client, parent)

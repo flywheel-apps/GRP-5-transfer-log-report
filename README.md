@@ -57,7 +57,7 @@ log
 ### match_containers_once (default = false)
 match_containers_once specifies whether to drop `<container> in flywheel not present in transfer log` errors for containers that match at least one transfer log record
 
-### filename (default = "transfer-log-report")
+### filename (default = "transfer-log-error-report.csv")
 filename specifies the name for the output error report file 
 
 ### Manifest JSON for configuration options
@@ -74,7 +74,7 @@ filename specifies the name for the output error report file
   "type": "boolean"
   },
   "filename": {
-    "default": "",
+    "default": "transfer-log-error-report.csv",
     "description": "Name for output report (optional, defaults to 'transfer-log-report').",
     "type": "string"
   }
