@@ -51,8 +51,11 @@ query:
  ```
 If a subject.label in Flywheel and the transfer log Subject value were both "subject1", but session.label and "Timepoint" were week4 and Week4, respectively, they would not be considered matches unless case_insensitive was set to `true`.
 
-### file_type (default = csv)
-file_type specifies the format to which to save the output error report file (csv or json).
+### case_insensitive (default = false)
+case_insensitive specifies whether to drop all string values to lowercase when comparing between Flywheel and the transfer
+log
+### match_containers_once (default = false)
+match_containers_once specifies whether to drop `<container> in flywheel not present in transfer log` errors for containers that match at least one transfer log record
 
 ### filename (default = "transfer-log-report")
 filename specifies the name for the output error report file 
@@ -60,15 +63,6 @@ filename specifies the name for the output error report file
 ### Manifest JSON for configuration options
 ``` json
 "config": {
-  "file_type": {
-    "default": "csv",
-    "description": "File Type of output report (json or csv).",
-    "type": "string",
-    "enum": [
-        "csv",
-        "json"
-      ]
-  },
   "case_insensitive": {
     "default": false,
     "description": "Whether to make post-regex comparisons case-insensitive.",
