@@ -36,15 +36,6 @@
     }
   },
   "config": {
-    "file_type": {
-      "default": "csv",
-      "description": "File Type of output report (json or csv).",
-      "type": "string",
-      "enum": [
-        "csv",
-        "json"
-      ]
-    },
     "case_insensitive": {
       "default": false,
       "description": "Whether to make post-regex comparisons case-insensitive.",
