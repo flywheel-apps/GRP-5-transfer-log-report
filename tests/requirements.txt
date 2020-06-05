@@ -1,3 +1,5 @@
 pytest
 pytest-cov
 mock
+pandas
+flywheel-sdk

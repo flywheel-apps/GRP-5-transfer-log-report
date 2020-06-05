@@ -1,0 +1,6 @@
+flywheel_id,transfer_log_rows,subject.label,session.timestamp,session.label,file.modality,error,matching_fw_ids,path
+869a4628bf33d1b3de842c2f,,10553,"aug 27, 2005",week 12,mr,acquisition in flywheel not present in transfer_log,['869a4628bf33d1b3de842c2f'],test_group/test_project/10553/Week 12/T1w
+3a434dd5a8f0c33c18ddc7c2,,10553,"jul 09, 2005",week 4,mr,acquisition in flywheel not present in transfer_log,['3a434dd5a8f0c33c18ddc7c2'],test_group/test_project/10553/Week 4/T1w
+c3fc408b8a748e071563661c,[7],10553,"sep 20, 2005",week 16,mr,1 more records in flywheel than in transfer_log,"['c3fc408b8a748e071563661c', 's3fc408b8a748e071563661c']",test_group/test_project/10553/Week 16/T1w
+s3fc408b8a748e071563661c,[7],10553,"sep 20, 2005",week 16,mr,1 more records in flywheel than in transfer_log,"['c3fc408b8a748e071563661c', 's3fc408b8a748e071563661c']",test_group/test_project/10553/Week 16/T1w
+,[6],10553,"aug 23, 2005",week 12,mr,acquisition in transfer_log not present in flywheel,,
