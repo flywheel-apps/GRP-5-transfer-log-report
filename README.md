@@ -74,6 +74,11 @@ filename specifies the name for the output error report file
     "description": "Whether to make post-regex comparisons case-insensitive.",
     "type": "boolean"
   },
+  "match_containers_once": {
+  "default": false,
+  "description": "If true, 'acquisition in flywheel not present in transfer log' errors will not be logged when multiple files from the same container match a transfer log row. (default=false)",
+  "type": "boolean"
+  },
   "filename": {
     "default": "",
     "description": "Name for output report (optional, defaults to 'transfer-log-report').",
@@ -85,21 +90,25 @@ filename specifies the name for the output error report file
 ## Output
 
 ### transfer-log-report
-This Gear outputs a `csv` or `json` file with the fields: `'error'`, `'path'`,  `'type'`, `'resolved'`, `'label'`, `'_id'` where:
-* `path` is the Flywheel resolver path to the container
+[Example csv](tests/unit_tests/data/example_error_report.csv) This Gear outputs a csv file with standard columns: `'flywheel_id'`, `'transfer_log_rows'`,  `'error'`, `'matching_fw_ids'`, and `'path'` where:
+* `flywheel_id` is the Flywheel container ID belonging to the container (empty for errors originating from transfer
+log rows)
+* `transfer_log_rows`is a list of Flywheel container IDs that have the same field values as the container
 * `error` describes the type of error encountered for the container
-* `type` is the Flywheel container type (i.e. session)
-* `resolved` is whether a subsequent gear run detected that the error was resolved
-* `label` denotes the label of the Flywheel container
-* `row_or_id` is the Flywheel container id for the container or the row of the transfer log
+
+In addition to these standard columns, columns for the fields on which records were matched are also included between the
+`'transfer_log_rows'` and `'error'` columns.
 
 **As of version 1.0.0, the transfer-log-report also includes keys/columns for the Flywheel field values for each container/transfer log row.**
 
-If an item in the transfer log is missing from Flywheel, the `'error'` column will be populated with:
+If a record in the transfer log is missing from Flywheel, the `'error'` column will be populated with:
 `row <row number> missing from flywheel` the row number is the number that will be displayed when viewing the spreadsheet in a spreadsheet application such as Microsoft Excel (the true row index plus 2, accounting for the header and convention of counting from 1).
 
-Conversely, if an item in Flywheel is missing from the transfer log, the `'error'` column will be populated with:
+Conversely, if a record in Flywheel is missing from the transfer log, the `'error'` column will be populated with:
 `<container> in flywheel not present in transfer log`
+
+If both Flywheel and the transfer logs have matching records, but the number of records for Flywheel and the transfer log differ, the `'error'` column will be populated with:
+`<difference> more records in <flywheel or transfer_log> than in <transfer_log or flywheel>`
 
 ### Flywheel metadata updates
 This gear updates the analysis label to `TRANSFER_ERROR_COUNT_<error count>_AT_<timestamp>` upon successful execution.
